@@ -61,6 +61,9 @@ app.whenReady().then(() => {
     callback(permission === 'media');
   });
 
+  // Register is-first-run BEFORE loadConfig() creates the file
+  ipcMain.handle('is-first-run', () => !fs.existsSync(CONFIG_PATH));
+
   const config = loadConfig();
   startShim();
 

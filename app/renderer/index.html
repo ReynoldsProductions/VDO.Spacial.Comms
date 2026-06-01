@@ -76,6 +76,40 @@
     .settings-actions button { padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; font-size: 13px; }
     .btn-save { background: #2a5c2a; color: #7ec87e; }
     .btn-cancel { background: #333; color: #ccc; }
+
+    /* Session section in settings */
+    .settings-divider { border: none; border-top: 1px solid #333; margin: 4px 0; }
+    .settings-section-heading { font-size: 12px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+    .session-code-area { width: 100%; background: #1a1a1a; border: 1px solid #333; color: #aaa; padding: 8px; border-radius: 4px; font-size: 11px; font-family: monospace; resize: none; height: 64px; }
+    .session-copy-btn { align-self: flex-start; background: #2a5c2a; border: none; color: #7ec87e; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    .session-copy-btn:hover { filter: brightness(1.2); }
+    .session-msg { font-size: 11px; min-height: 16px; color: #4caf50; }
+    .session-import-area { width: 100%; background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; padding: 8px; border-radius: 4px; font-size: 11px; font-family: monospace; resize: none; height: 64px; }
+    .session-apply-btn { align-self: flex-start; background: #333; border: none; color: #ccc; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    .session-apply-btn:hover { background: #444; }
+    .session-import-msg { font-size: 11px; min-height: 16px; }
+    .session-import-msg.ok { color: #4caf50; }
+    .session-import-msg.fail { color: #f44336; }
+
+    /* First-run setup modal */
+    #setup-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); align-items: center; justify-content: center; z-index: 200; }
+    #setup-overlay.open { display: flex; }
+    .setup-card { background: #242424; border: 1px solid #333; border-radius: 12px; padding: 32px; width: 480px; display: flex; flex-direction: column; gap: 20px; }
+    .setup-card h2 { font-size: 18px; font-weight: 600; text-align: center; }
+    .setup-card p { font-size: 13px; color: #aaa; text-align: center; }
+    .setup-btn-row { display: flex; gap: 12px; justify-content: center; }
+    .setup-btn { flex: 1; padding: 12px; border-radius: 6px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; }
+    .setup-btn-new { background: #2a5c2a; color: #7ec87e; }
+    .setup-btn-join { background: #333; color: #ccc; }
+    .setup-btn:hover { filter: brightness(1.2); }
+    #setup-join-section { display: none; flex-direction: column; gap: 10px; }
+    #setup-join-section.visible { display: flex; }
+    .setup-join-area { width: 100%; background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; padding: 8px; border-radius: 4px; font-size: 12px; font-family: monospace; resize: none; height: 72px; }
+    .setup-apply-btn { background: #2a5c2a; border: none; color: #7ec87e; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .setup-apply-btn:hover { filter: brightness(1.2); }
+    .setup-msg { font-size: 12px; min-height: 16px; }
+    .setup-msg.ok { color: #4caf50; }
+    .setup-msg.fail { color: #f44336; }
   </style>
 </head>
 <body>
@@ -84,6 +118,23 @@
     <span id="device-label">Device: Default</span>
     <button id="open-settings">Settings</button>
   </header>
+
+  <!-- First-run setup modal -->
+  <div id="setup-overlay">
+    <div class="setup-card">
+      <h2>Welcome to VDO.MultiCh.Comms</h2>
+      <p>Are you setting up a new session or joining an existing one?</p>
+      <div class="setup-btn-row">
+        <button class="setup-btn setup-btn-new" id="setup-new">New Session</button>
+        <button class="setup-btn setup-btn-join" id="setup-join-btn">Join Existing</button>
+      </div>
+      <div id="setup-join-section">
+        <textarea class="setup-join-area" id="setup-join-code" placeholder="Paste session code here…"></textarea>
+        <button class="setup-apply-btn" id="setup-apply">Apply &amp; Continue</button>
+        <div class="setup-msg" id="setup-msg"></div>
+      </div>
+    </div>
+  </div>
 
   <div id="lines"></div>
 
@@ -116,6 +167,20 @@
           <button class="test-btn" id="test-url-btn">Test</button>
         </div>
         <div class="test-status" id="test-status"></div>
+      </div>
+      <hr class="settings-divider" />
+      <div class="settings-section-heading">Session</div>
+      <div class="settings-row">
+        <label>Session code</label>
+        <textarea class="session-code-area" id="session-export-code" readonly placeholder="Click Export to generate…"></textarea>
+        <button class="session-copy-btn" id="session-export-btn">Export &amp; Copy</button>
+        <div class="session-msg" id="session-export-msg"></div>
+      </div>
+      <div class="settings-row">
+        <label>Import session</label>
+        <textarea class="session-import-area" id="session-import-code" placeholder="Paste session code here…"></textarea>
+        <button class="session-apply-btn" id="session-import-btn">Apply</button>
+        <div class="session-import-msg" id="session-import-msg"></div>
       </div>
       <div class="settings-actions">
         <button class="btn-cancel" id="cancel-settings">Cancel</button>

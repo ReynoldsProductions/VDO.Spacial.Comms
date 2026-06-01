@@ -121,11 +121,15 @@ function updateDeviceLabel() {
 }
 
 async function init() {
+  const firstRun = await window.api.isFirstRun();
   config = await window.api.getConfig();
   connectShim();
   updateDeviceLabel();
-  renderLines();
   setupSettings();
+  if (firstRun) {
+    await showSetupWizard();
+  }
+  renderLines();
   // Populate device lists immediately from Web Audio API — shim may not be running yet
   shimDevices = await enumerateAudioDevices();
   populateDeviceDropdown(document.getElementById('input-device-select'), shimDevices.inputs, 'input_device');
@@ -328,6 +332,70 @@ function copyDirectorLink(id) {
   if (btn) { btn.textContent = 'Copied!'; setTimeout(() => (btn.textContent = 'Copy'), 1500); }
 }
 
+// ── Session export / import ───────────────────────────────────────────────────
+
+function exportSession() {
+  const session = {
+    v: 1,
+    lines: config.lines.map(l => ({ id: l.id, name: l.name, room_key: l.room_key })),
+  };
+  return btoa(JSON.stringify(session));
+}
+
+function applySession(code) {
+  let parsed;
+  try {
+    parsed = JSON.parse(atob(code.trim()));
+  } catch (_) {
+    throw new Error('Invalid session code — could not decode.');
+  }
+  if (parsed.v !== 1 || !Array.isArray(parsed.lines)) {
+    throw new Error('Invalid session code — unexpected format.');
+  }
+  parsed.lines.forEach((sl, i) => {
+    const line = config.lines[i];
+    if (!line) return;
+    line.name = sl.name;
+    line.room_key = sl.room_key;
+  });
+}
+
+// ── First-run setup wizard ────────────────────────────────────────────────────
+
+function showSetupWizard() {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('setup-overlay');
+    overlay.classList.add('open');
+
+    document.getElementById('setup-new').addEventListener('click', () => {
+      overlay.classList.remove('open');
+      resolve();
+    });
+
+    document.getElementById('setup-join-btn').addEventListener('click', () => {
+      document.getElementById('setup-join-section').classList.add('visible');
+    });
+
+    document.getElementById('setup-apply').addEventListener('click', async () => {
+      const code = document.getElementById('setup-join-code').value;
+      const msg = document.getElementById('setup-msg');
+      try {
+        applySession(code);
+        await window.api.saveConfig(config);
+        msg.textContent = 'Session applied!';
+        msg.className = 'setup-msg ok';
+        setTimeout(() => {
+          overlay.classList.remove('open');
+          resolve();
+        }, 800);
+      } catch (e) {
+        msg.textContent = e.message;
+        msg.className = 'setup-msg fail';
+      }
+    });
+  });
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 function setupSettings() {
@@ -348,7 +416,39 @@ function setupSettings() {
     shimDevices = await enumerateAudioDevices();
     populateDeviceDropdown(document.getElementById('input-device-select'), shimDevices.inputs, 'input_device');
     populateDeviceDropdown(document.getElementById('output-device-select'), shimDevices.outputs, 'output_device');
+    // Pre-populate export code
+    document.getElementById('session-export-code').value = exportSession();
+    document.getElementById('session-export-msg').textContent = '';
+    document.getElementById('session-import-code').value = '';
+    document.getElementById('session-import-msg').textContent = '';
+    document.getElementById('session-import-msg').className = 'session-import-msg';
     overlay.classList.add('open');
+  });
+
+  // Session export
+  document.getElementById('session-export-btn').addEventListener('click', () => {
+    const code = exportSession();
+    document.getElementById('session-export-code').value = code;
+    navigator.clipboard.writeText(code);
+    const msg = document.getElementById('session-export-msg');
+    msg.textContent = 'Session code copied!';
+    setTimeout(() => { msg.textContent = ''; }, 2000);
+  });
+
+  // Session import
+  document.getElementById('session-import-btn').addEventListener('click', async () => {
+    const code = document.getElementById('session-import-code').value;
+    const msg = document.getElementById('session-import-msg');
+    try {
+      applySession(code);
+      await window.api.saveConfig(config);
+      renderLines();
+      msg.textContent = 'Session imported successfully.';
+      msg.className = 'session-import-msg ok';
+    } catch (e) {
+      msg.textContent = e.message;
+      msg.className = 'session-import-msg fail';
+    }
   });
 
   preset.addEventListener('change', () => {
