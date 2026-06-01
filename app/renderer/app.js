@@ -1,4 +1,6 @@
 let config = null;
+let inputChannelCount = 2;
+let outputChannelCount = 2;
 
 async function renderQr(id, url) {
   const img = document.getElementById(`qr-${id}`);
@@ -22,7 +24,14 @@ function connectShim() {
     try {
       const msg = JSON.parse(e.data);
       if (msg.type === 'devices') {
-        shimDevices = { inputs: msg.input_devices || [], outputs: msg.output_devices || [] };
+        // Shim sends names only — merge with deviceIds from Web Audio API enumeration
+        const mergeIds = (names, existing) => names.map(name => ({
+          name, deviceId: existing.find(d => d.name === name)?.deviceId || '',
+        }));
+        shimDevices = {
+          inputs: mergeIds(msg.input_devices || [], shimDevices.inputs || []),
+          outputs: mergeIds(msg.output_devices || [], shimDevices.outputs || []),
+        };
         populateDeviceDropdown(document.getElementById('input-device-select'), shimDevices.inputs, 'input_device');
         populateDeviceDropdown(document.getElementById('output-device-select'), shimDevices.outputs, 'output_device');
       }
@@ -33,10 +42,12 @@ function connectShim() {
   });
 }
 
+// devices is [{name, deviceId}] or [string] — normalises both
 function populateDeviceDropdown(select, devices, configKey) {
   if (!select) return;
   select.innerHTML = '<option value="">Default</option>';
-  devices.forEach((name) => {
+  devices.forEach((d) => {
+    const name = typeof d === 'string' ? d : d.name;
     const opt = document.createElement('option');
     opt.value = name;
     opt.textContent = name;
@@ -45,18 +56,73 @@ function populateDeviceDropdown(select, devices, configKey) {
   });
 }
 
-// Enumerate audio devices via Web Audio API — works without the shim
+// Enumerate audio devices — returns {name, deviceId} objects so channel counts can be queried
 async function enumerateAudioDevices() {
   try {
-    // Request mic permission so device labels are populated (Chromium hides labels without it)
     await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
     const all = await navigator.mediaDevices.enumerateDevices();
-    const inputs = [...new Set(all.filter(d => d.kind === 'audioinput' && d.label).map(d => d.label))];
-    const outputs = [...new Set(all.filter(d => d.kind === 'audiooutput' && d.label).map(d => d.label))];
-    return { inputs, outputs };
+    const seen = (kind) => {
+      const names = new Set();
+      return all
+        .filter(d => d.kind === kind && d.label)
+        .filter(d => names.has(d.label) ? false : names.add(d.label))
+        .map(d => ({ name: d.label, deviceId: d.deviceId }));
+    };
+    return { inputs: seen('audioinput'), outputs: seen('audiooutput') };
   } catch (_) {
     return { inputs: [], outputs: [] };
   }
+}
+
+// Query the actual channel count for the selected input/output devices
+async function queryChannelCounts(inputName, outputName) {
+  const inputInfo = shimDevices.inputs?.find(d => d.name === inputName);
+  const outputInfo = shimDevices.outputs?.find(d => d.name === outputName);
+
+  // Input: getUserMedia with the specific deviceId and ask for max channels
+  let inCount = 2;
+  if (inputInfo?.deviceId) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { exact: inputInfo.deviceId }, channelCount: { ideal: 32 } },
+      });
+      inCount = stream.getTracks()[0].getSettings().channelCount || 2;
+      stream.getTracks().forEach(t => t.stop());
+    } catch (_) {}
+  }
+
+  // Output: AudioContext.setSinkId then read destination.maxChannelCount
+  let outCount = 2;
+  if (outputInfo?.deviceId) {
+    try {
+      const ac = new AudioContext();
+      if (typeof ac.setSinkId === 'function') {
+        await ac.setSinkId(outputInfo.deviceId);
+        outCount = ac.destination.maxChannelCount || 2;
+      }
+      await ac.close();
+    } catch (_) {}
+  }
+
+  return { inCount, outCount };
+}
+
+// Rebuild all per-line channel dropdowns to match device capabilities
+function updateChannelDropdowns() {
+  config.lines.forEach((line) => {
+    const inSel = document.getElementById(`ch-in-${line.id}`);
+    const outSel = document.getElementById(`ch-out-${line.id}`);
+    if (inSel) {
+      const clampedIn = Math.min(line.input_channel, inputChannelCount - 1);
+      inSel.innerHTML = channelOptions(clampedIn, inputChannelCount);
+      if (clampedIn !== line.input_channel) { line.input_channel = clampedIn; }
+    }
+    if (outSel) {
+      const clampedOut = Math.min(line.output_channel, outputChannelCount - 1);
+      outSel.innerHTML = channelOptions(clampedOut, outputChannelCount);
+      if (clampedOut !== line.output_channel) { line.output_channel = clampedOut; }
+    }
+  });
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────
@@ -79,6 +145,11 @@ async function init() {
   shimDevices = await enumerateAudioDevices();
   populateDeviceDropdown(document.getElementById('input-device-select'), shimDevices.inputs, 'input_device');
   populateDeviceDropdown(document.getElementById('output-device-select'), shimDevices.outputs, 'output_device');
+  // Set channel dropdowns to match the currently configured devices
+  const counts = await queryChannelCounts(config.input_device, config.output_device);
+  inputChannelCount = counts.inCount;
+  outputChannelCount = counts.outCount;
+  updateChannelDropdowns();
 }
 
 function channelOptions(selected, count = 16) {
@@ -284,6 +355,11 @@ function setupSettings() {
     config.output_device = document.getElementById('output-device-select').value;
     const isCustom = preset.value === 'custom';
     config.vdo_base_url = isCustom ? customUrl.value.trim() : 'https://vdo.ninja';
+    // Update channel counts before saving so clamped values are persisted
+    const counts = await queryChannelCounts(config.input_device, config.output_device);
+    inputChannelCount = counts.inCount;
+    outputChannelCount = counts.outCount;
+    updateChannelDropdowns();
     await window.api.saveConfig(config);
     updateDeviceLabel();
     overlay.classList.remove('open');
