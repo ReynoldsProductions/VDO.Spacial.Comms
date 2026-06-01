@@ -23,28 +23,29 @@ https://vdo.ninja/?room=ROOMKEY&webcam=1&vd=0&videodevice=0&autostart=1&label=NA
 
 ---
 
-## Outstanding: Shim audio → VDO.ninja bridge
+## Shim audio → VDO.ninja bridge
 
-**Status:** Not yet implemented.
+**Status:** Implemented (2026-06-01). Needs end-to-end test with hardware.
 
-The Rust shim captures hardware audio channels over CPAL and exposes them as tagged PCM frames over a local WebSocket (`ws://127.0.0.1:9696`). The `WebContentsView` for each party line connects to VDO.ninja and captures from Chromium's default microphone — it does NOT yet receive audio from the shim.
+`buildShimScript(channelId)` in `app/main.js` is injected into each `WebContentsView` on `dom-ready` (before VDO.ninja calls `getUserMedia`). It:
 
-**What needs to be built:**
-1. In each `WebContentsView`, inject a content script that:
-   - Opens a WebSocket to the shim
-   - Receives PCM frames for the assigned channel
-   - Creates a `MediaStream` from an `AudioWorklet` or `ScriptProcessorNode` fed by the shim PCM
-   - Replaces the VDO.ninja microphone track with this synthetic stream via the [IFRAME API](https://docs.vdo.ninja/api-documentation/iframe-api) or by overriding `getUserMedia`
-2. The output path (VDO.ninja audio → shim → hardware output channel) mirrors this in reverse.
+1. Creates an `AudioContext` at 48 kHz
+2. Loads an `AudioWorkletProcessor` from a blob URL (no separate file needed)
+3. Opens `ws://127.0.0.1:9696` and feeds frames where `channel_id === channelId` into the worklet
+4. Overrides `navigator.mediaDevices.getUserMedia` so that when VDO.ninja requests audio, it receives the synthetic `MediaStreamDestinationNode` stream instead of the hardware mic
 
-**Alternative approach:**
-Route BlackHole channel N to macOS system default audio input before connecting. VDO.ninja will then capture the correct channel natively without needing the Web Audio bridge. This is a valid interim workaround for controlled hardware setups.
+The `channelId` is `line.input_channel` (0-based index), passed through from the renderer via `window.api.connectLine(id, url, channelId)`.
+
+**What still needs testing:**
+- Confirm `[shim-bridge] ready — channel N` appears in the WebContentsView DevTools console on connect
+- Confirm VDO.ninja director view shows non-zero kbps for the connected line
+- The reverse path (VDO.ninja → shim playback producer) is not yet wired
 
 ---
 
-## Outstanding: Electron app visible in director but shows muted / 0 kbps
+## Electron app visible in director but shows muted / 0 kbps
 
-This is a symptom of the shim bridge being missing — the `WebContentsView` joins the room but captures from whatever Chromium picks as its default input. If that device has no signal, the participant appears muted.
+If the shim bridge injected correctly (check DevTools console for `[shim-bridge] ready`), the most likely cause is that the shim WebSocket isn't running or has no audio signal on the selected channel. Confirm the shim process started (logged to Electron main process stdout) and that the hardware device is sending audio.
 
 ---
 

@@ -123,6 +123,9 @@
     .setup-msg { font-size: 12px; min-height: 16px; }
     .setup-msg.ok { color: #4caf50; }
     .setup-msg.fail { color: #f44336; }
+
+    footer { padding: 6px 20px; background: #111; border-top: 1px solid #222; display: flex; justify-content: flex-end; }
+    #build-label { font-size: 10px; color: #444; font-family: monospace; letter-spacing: 0.3px; }
   </style>
 </head>
 <body>
@@ -233,6 +236,10 @@
       </div>
     </div>
   </div>
+
+  <footer>
+    <span id="build-label">v0.0.1 build 1</span>
+  </footer>
 
   <script src="app.js"></script>
 </body>

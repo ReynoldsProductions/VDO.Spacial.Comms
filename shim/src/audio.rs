@@ -111,10 +111,21 @@ pub fn start(input_substr: &str, output_substr: &str, sample_rate: u32) -> Resul
     let input_dev = find_input_device(&host, input_substr)?;
     let output_dev = find_output_device(&host, output_substr)?;
 
-    let config = StreamConfig {
-        channels: CHANNEL_COUNT as u16,
+    // Use the device's actual channel count, capped at CHANNEL_COUNT.
+    // Opening with a hardcoded count on a 2-ch device produces garbled deinterleaving.
+    let in_ch = (max_input_channels(&input_dev) as usize).min(CHANNEL_COUNT).max(1);
+    let out_ch = (max_output_channels(&output_dev) as usize).min(CHANNEL_COUNT).max(1);
+    tracing::info!("opening input with {in_ch} ch, output with {out_ch} ch");
+
+    let in_config = StreamConfig {
+        channels: in_ch as u16,
         sample_rate: cpal::SampleRate(sample_rate),
-        buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32 * CHANNEL_COUNT as u32),
+        buffer_size: cpal::BufferSize::Default,
+    };
+    let out_config = StreamConfig {
+        channels: out_ch as u16,
+        sample_rate: cpal::SampleRate(sample_rate),
+        buffer_size: cpal::BufferSize::Default,
     };
 
     let mut cap_producers: Vec<HeapProducer<f32>> = Vec::new();
@@ -140,11 +151,11 @@ pub fn start(input_substr: &str, output_substr: &str, sample_rate: u32) -> Resul
     let cap_producers_clone = cap_producers.clone();
     let input_stream = input_dev
         .build_input_stream(
-            &config,
+            &in_config,
             move |data: &[f32], _| {
                 let mut prods = cap_producers_clone.lock().unwrap();
                 for (i, &sample) in data.iter().enumerate() {
-                    let ch = i % CHANNEL_COUNT;
+                    let ch = i % in_ch;  // deinterleave using actual device channel count
                     let _ = prods[ch].push(sample);
                 }
             },
@@ -156,11 +167,11 @@ pub fn start(input_substr: &str, output_substr: &str, sample_rate: u32) -> Resul
     let pb_consumers_clone = pb_consumers.clone();
     let output_stream = output_dev
         .build_output_stream(
-            &config,
+            &out_config,
             move |data: &mut [f32], _| {
                 let mut cons = pb_consumers_clone.lock().unwrap();
                 for (i, sample) in data.iter_mut().enumerate() {
-                    let ch = i % CHANNEL_COUNT;
+                    let ch = i % out_ch;  // interleave using actual device channel count
                     *sample = cons[ch].pop().unwrap_or(0.0);
                 }
             },
@@ -184,24 +195,47 @@ pub fn start(input_substr: &str, output_substr: &str, sample_rate: u32) -> Resul
     ))
 }
 
+fn name_matches(cpal_name: &str, query: &str) -> bool {
+    let a = cpal_name.to_lowercase();
+    let b = query.to_lowercase();
+    // Web Audio API appends "(Virtual)", "(Built-in)" etc. that CPAL omits.
+    // Accept if either string is a substring of the other.
+    a.contains(&b) || b.contains(&a)
+}
+
 fn find_input_device(host: &cpal::Host, substr: &str) -> Result<Device> {
     if substr.is_empty() {
         return host.default_input_device().context("no default input device");
     }
-    let lower = substr.to_lowercase();
-    host.input_devices()
-        .context("enumerate input devices")?
-        .find(|d| d.name().map(|n| n.to_lowercase().contains(&lower)).unwrap_or(false))
-        .context(format!("no input device matching '{substr}'"))
+    let devs: Vec<Device> = host.input_devices().context("enumerate input devices")?.collect();
+    let names: Vec<String> = devs.iter().filter_map(|d| d.name().ok()).collect();
+    tracing::info!("available input devices: {:?}", names);
+    devs.into_iter()
+        .find(|d| d.name().map(|n| name_matches(&n, substr)).unwrap_or(false))
+        .context(format!("no input device matching '{substr}' — available: {names:?}"))
 }
 
 fn find_output_device(host: &cpal::Host, substr: &str) -> Result<Device> {
     if substr.is_empty() {
         return host.default_output_device().context("no default output device");
     }
-    let lower = substr.to_lowercase();
-    host.output_devices()
-        .context("enumerate output devices")?
-        .find(|d| d.name().map(|n| n.to_lowercase().contains(&lower)).unwrap_or(false))
-        .context(format!("no output device matching '{substr}'"))
+    let devs: Vec<Device> = host.output_devices().context("enumerate output devices")?.collect();
+    let names: Vec<String> = devs.iter().filter_map(|d| d.name().ok()).collect();
+    tracing::info!("available output devices: {:?}", names);
+    if let Some(dev) = devs.into_iter().find(|d| d.name().map(|n| name_matches(&n, substr)).unwrap_or(false)) {
+        return Ok(dev);
+    }
+    // CoreAudio does not always enumerate the default output (e.g. built-in speakers).
+    // Check the default device by name first, then fall back to it unconditionally
+    // so the shim never crashes due to a stale device name in config.
+    if let Some(def) = host.default_output_device() {
+        let def_name = def.name().unwrap_or_default();
+        tracing::info!("default output device: {:?}", def_name);
+        if name_matches(&def_name, substr) {
+            return Ok(def);
+        }
+        tracing::warn!("output '{substr}' not found — falling back to default '{def_name}'");
+        return Ok(def);
+    }
+    anyhow::bail!("no output device matching '{substr}' — available: {names:?}")
 }

@@ -136,6 +136,8 @@ function updateDeviceLabel() {
 async function init() {
   const firstRun = await window.api.isFirstRun();
   config = await window.api.getConfig();
+  const meta = await window.api.getBuildMeta();
+  document.getElementById('build-label').textContent = `v${meta.version} build ${meta.build}`;
   connectShim();
   updateDeviceLabel();
   setupSettings();
@@ -327,7 +329,7 @@ async function toggleConnect(id) {
   if (state.connected) {
     // Use a WebContentsView in the main process — proper Chromium instance with
     // real mic access, not a suppressed hidden iframe
-    await window.api.connectLine(id, joinUrl(line));
+    await window.api.connectLine(id, joinUrl(line), line.input_channel);
   } else {
     await window.api.disconnectLine(id);
   }
@@ -577,6 +579,7 @@ function setupSettings() {
     outputChannelCount = outOverride || detected.outCount;
     updateChannelDropdowns();
     await window.api.saveConfig(config);
+    await window.api.restartShim();
     updateDeviceLabel();
     overlay.classList.remove('open');
     // Refresh join links and QR codes

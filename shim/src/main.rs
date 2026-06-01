@@ -132,9 +132,15 @@ async fn handle_client(
                         })
                         .collect()
                 };
+                // Binary frame: 4 bytes channel_id (u32 LE) + samples as f32 LE
+                // ~1.9 KB vs ~15 KB JSON — eliminates parse jitter in the bridge.
                 for frame in frames {
-                    let json = serde_json::to_string(&frame).unwrap();
-                    if sender.lock().await.send(Message::Text(json)).await.is_err() {
+                    let mut buf = Vec::with_capacity(4 + frame.samples.len() * 4);
+                    buf.extend_from_slice(&(frame.channel_id as u32).to_le_bytes());
+                    for s in &frame.samples {
+                        buf.extend_from_slice(&s.to_le_bytes());
+                    }
+                    if sender.lock().await.send(Message::Binary(buf.into())).await.is_err() {
                         return;
                     }
                 }
