@@ -380,16 +380,16 @@ function applySession(code) {
 
 // ── First-run setup wizard ────────────────────────────────────────────────────
 
+function sanitiseKey(str) {
+  return str.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 function showSetupWizard() {
   return new Promise((resolve) => {
     const overlay = document.getElementById('setup-overlay');
     overlay.classList.add('open');
 
-    document.getElementById('setup-new').addEventListener('click', () => {
-      overlay.classList.remove('open');
-      resolve();
-    });
-
+    // ── Step 1: new vs join ──────────────────────────────────────────────────
     document.getElementById('setup-join-btn').addEventListener('click', () => {
       document.getElementById('setup-join-section').classList.add('visible');
     });
@@ -402,14 +402,76 @@ function showSetupWizard() {
         await window.api.saveConfig(config);
         msg.textContent = 'Session applied!';
         msg.className = 'setup-msg ok';
-        setTimeout(() => {
-          overlay.classList.remove('open');
-          resolve();
-        }, 800);
+        setTimeout(() => { overlay.classList.remove('open'); resolve(); }, 800);
       } catch (e) {
         msg.textContent = e.message;
         msg.className = 'setup-msg fail';
       }
+    });
+
+    document.getElementById('setup-new').addEventListener('click', () => {
+      // Advance to step 2
+      document.getElementById('setup-step-1').style.display = 'none';
+      const step2 = document.getElementById('setup-step-2');
+      step2.classList.add('visible');
+
+      // Build the line name grid
+      const grid = document.getElementById('setup-lines-grid');
+      grid.innerHTML = '';
+      config.lines.forEach((line) => {
+        const div = document.createElement('div');
+        div.className = 'setup-line-field';
+        div.innerHTML = `
+          <label>Line ${line.id + 1} name</label>
+          <input type="text" id="setup-line-${line.id}" value="${line.name}" maxlength="24" placeholder="e.g. Production" />
+          <div class="setup-line-key" id="setup-line-key-${line.id}"></div>
+        `;
+        grid.appendChild(div);
+      });
+
+      // Live preview of room keys
+      const eventInput = document.getElementById('setup-event-name');
+      const confirmBtn = document.getElementById('setup-confirm');
+      const preview = document.getElementById('setup-key-preview');
+
+      function updatePreviews() {
+        const event = sanitiseKey(eventInput.value);
+        const valid = event.length >= 2;
+        confirmBtn.disabled = !valid;
+        preview.textContent = valid ? '' : 'Minimum 2 characters';
+        config.lines.forEach((line) => {
+          const nameInput = document.getElementById(`setup-line-${line.id}`);
+          const keyEl = document.getElementById(`setup-line-key-${line.id}`);
+          const linePart = sanitiseKey(nameInput?.value || line.name);
+          keyEl.textContent = valid ? `room: ${event}${linePart || `pl${line.id + 1}`}` : '';
+        });
+      }
+
+      eventInput.addEventListener('input', updatePreviews);
+      config.lines.forEach((line) => {
+        document.getElementById(`setup-line-${line.id}`)?.addEventListener('input', updatePreviews);
+      });
+      updatePreviews();
+    });
+
+    // ── Step 2: confirm ──────────────────────────────────────────────────────
+    document.getElementById('setup-confirm').addEventListener('click', async () => {
+      const event = sanitiseKey(document.getElementById('setup-event-name').value);
+      const msg = document.getElementById('setup-step2-msg');
+      if (event.length < 2) {
+        msg.textContent = 'Enter an event name (min 2 characters)';
+        msg.className = 'setup-msg fail';
+        return;
+      }
+      config.lines.forEach((line) => {
+        const nameInput = document.getElementById(`setup-line-${line.id}`);
+        const name = nameInput?.value.trim() || line.name;
+        line.name = name;
+        line.room_key = event + sanitiseKey(name || `pl${line.id + 1}`);
+      });
+      await window.api.saveConfig(config);
+      overlay.classList.remove('open');
+      resolve();
     });
   });
 }
