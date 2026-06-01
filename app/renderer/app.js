@@ -29,7 +29,10 @@ function connectShim() {
         const merge = (shimEntries, existing) => shimEntries.map(e => ({
           name: e.name,
           channels: e.channels,
-          deviceId: existing.find(d => d.name === e.name)?.deviceId || '',
+          deviceId: existing.find(d => {
+            const a = d.name.toLowerCase(), b = e.name.toLowerCase();
+            return a.includes(b) || b.includes(a);
+          })?.deviceId || '',
         }));
         shimDevices = {
           inputs: merge(msg.input_devices || [], shimDevices.inputs || []),
@@ -82,10 +85,20 @@ async function enumerateAudioDevices() {
   }
 }
 
-// Look up channel counts from shim device info (CPAL — accurate for multi-channel interfaces)
+// Look up channel counts from shim device info (CPAL — accurate for multi-channel interfaces).
+// Uses substring matching because CPAL and Web Audio API report different names for the same
+// device on macOS (e.g. "BlackHole 16ch" vs "BlackHole 16ch (Virtual)").
 function queryChannelCounts(inputName, outputName) {
-  const inDev = shimDevices.inputs?.find(d => d.name === inputName);
-  const outDev = shimDevices.outputs?.find(d => d.name === outputName);
+  const fuzzy = (devices, name) => {
+    if (!name || !devices) return null;
+    const a = name.toLowerCase();
+    return devices.find(d => {
+      const b = d.name.toLowerCase();
+      return a.includes(b) || b.includes(a);
+    });
+  };
+  const inDev = fuzzy(shimDevices.inputs, inputName);
+  const outDev = fuzzy(shimDevices.outputs, outputName);
   return {
     inCount: inDev?.channels || 2,
     outCount: outDev?.channels || 2,
