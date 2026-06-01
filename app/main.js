@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, session } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -50,6 +50,11 @@ function startShim() {
 }
 
 app.whenReady().then(() => {
+  // Grant mic permission so enumerateDevices() returns labels
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(permission === 'media');
+  });
+
   const config = loadConfig();
   startShim();
 

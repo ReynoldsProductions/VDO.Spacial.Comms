@@ -32,15 +32,28 @@ function connectShim() {
 
 function populateDeviceDropdown(select, devices) {
   if (!select) return;
-  const current = select.value;
   select.innerHTML = '<option value="">Default device</option>';
   devices.forEach((name) => {
     const opt = document.createElement('option');
     opt.value = name;
     opt.textContent = name;
-    if (name === current || name === config?.audio_device) opt.selected = true;
+    if (name === config?.audio_device) opt.selected = true;
     select.appendChild(opt);
   });
+}
+
+// Enumerate audio input devices via Web Audio API — works without the shim
+async function enumerateAudioDevices() {
+  try {
+    // Request mic permission so device labels are populated (Chromium hides labels without it)
+    await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+    const all = await navigator.mediaDevices.enumerateDevices();
+    return all
+      .filter(d => d.kind === 'audioinput' && d.label)
+      .map(d => d.label);
+  } catch (_) {
+    return [];
+  }
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────
@@ -56,6 +69,9 @@ async function init() {
   updateDeviceLabel();
   renderLines();
   setupSettings();
+  // Populate device list immediately from Web Audio API — shim may not be running yet
+  shimDevices = await enumerateAudioDevices();
+  populateDeviceDropdown(document.getElementById('audio-device-select'), shimDevices);
 }
 
 function channelOptions(selected, count = 16) {
@@ -231,15 +247,15 @@ function setupSettings() {
   const testBtn = document.getElementById('test-url-btn');
   const testStatus = document.getElementById('test-status');
 
-  document.getElementById('open-settings').addEventListener('click', () => {
+  document.getElementById('open-settings').addEventListener('click', async () => {
     const isCustom = config.vdo_base_url !== 'https://vdo.ninja';
     preset.value = isCustom ? 'custom' : 'https://vdo.ninja';
     customUrl.value = isCustom ? config.vdo_base_url : '';
     customRow.style.display = isCustom ? 'flex' : 'none';
     testStatus.textContent = '';
-    // Populate device dropdown with latest shim device list
-    const devSelect = document.getElementById('audio-device-select');
-    populateDeviceDropdown(devSelect, shimDevices);
+    // Re-enumerate on open so newly connected devices appear
+    shimDevices = await enumerateAudioDevices();
+    populateDeviceDropdown(document.getElementById('audio-device-select'), shimDevices);
     overlay.classList.add('open');
   });
 
