@@ -26,11 +26,17 @@ struct AudioFrame {
 
 /// Outbound: device lists sent on connect
 #[derive(Debug, Serialize)]
+struct DeviceEntry {
+    name: String,
+    channels: u16,
+}
+
+#[derive(Debug, Serialize)]
 struct DevicesMsg {
     #[serde(rename = "type")]
     msg_type: &'static str,
-    input_devices: Vec<String>,
-    output_devices: Vec<String>,
+    input_devices: Vec<DeviceEntry>,
+    output_devices: Vec<DeviceEntry>,
 }
 
 /// Inbound: control messages from Electron
@@ -97,8 +103,8 @@ async fn handle_client(
     // Send device list immediately on connect
     let devices_msg = serde_json::to_string(&DevicesMsg {
         msg_type: "devices",
-        input_devices: audio::list_input_devices(),
-        output_devices: audio::list_output_devices(),
+        input_devices: audio::list_input_devices().into_iter().map(|d| DeviceEntry { name: d.name, channels: d.channels }).collect(),
+        output_devices: audio::list_output_devices().into_iter().map(|d| DeviceEntry { name: d.name, channels: d.channels }).collect(),
     }).unwrap();
     if sender.lock().await.send(Message::Text(devices_msg)).await.is_err() {
         return;
@@ -150,10 +156,11 @@ async fn handle_client(
             } else if let Ok(ctrl) = serde_json::from_str::<ControlMsg>(&text) {
                 match ctrl {
                     ControlMsg::ListDevices => {
+                        let to_entries = |devs: Vec<audio::DeviceInfo>| devs.into_iter().map(|d| DeviceEntry { name: d.name, channels: d.channels }).collect::<Vec<_>>();
                         let reply = serde_json::to_string(&DevicesMsg {
                             msg_type: "devices",
-                            input_devices: audio::list_input_devices(),
-                            output_devices: audio::list_output_devices(),
+                            input_devices: to_entries(audio::list_input_devices()),
+                            output_devices: to_entries(audio::list_output_devices()),
                         }).unwrap();
                         if sender.lock().await.send(Message::Text(reply)).await.is_err() {
                             break;

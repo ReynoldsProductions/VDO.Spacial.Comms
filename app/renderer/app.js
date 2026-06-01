@@ -23,17 +23,25 @@ function connectShim() {
   shimWs.addEventListener('message', (e) => {
     try {
       const msg = JSON.parse(e.data);
-      if (msg.type === 'devices') {
+      if (msg.type === 'devices' && config) {
         // Shim sends names only — merge with deviceIds from Web Audio API enumeration
-        const mergeIds = (names, existing) => names.map(name => ({
-          name, deviceId: existing.find(d => d.name === name)?.deviceId || '',
+        // Merge shim entries (have channels) with Web Audio entries (have deviceId)
+        const merge = (shimEntries, existing) => shimEntries.map(e => ({
+          name: e.name,
+          channels: e.channels,
+          deviceId: existing.find(d => d.name === e.name)?.deviceId || '',
         }));
         shimDevices = {
-          inputs: mergeIds(msg.input_devices || [], shimDevices.inputs || []),
-          outputs: mergeIds(msg.output_devices || [], shimDevices.outputs || []),
+          inputs: merge(msg.input_devices || [], shimDevices.inputs || []),
+          outputs: merge(msg.output_devices || [], shimDevices.outputs || []),
         };
         populateDeviceDropdown(document.getElementById('input-device-select'), shimDevices.inputs, 'input_device');
         populateDeviceDropdown(document.getElementById('output-device-select'), shimDevices.outputs, 'output_device');
+        // Shim has accurate channel counts — update dropdowns now
+        const c = queryChannelCounts(config.input_device, config.output_device);
+        inputChannelCount = c.inCount;
+        outputChannelCount = c.outCount;
+        updateChannelDropdowns();
       }
     } catch (_) { /* audio frames — ignore for now */ }
   });
@@ -74,37 +82,14 @@ async function enumerateAudioDevices() {
   }
 }
 
-// Query the actual channel count for the selected input/output devices
-async function queryChannelCounts(inputName, outputName) {
-  const inputInfo = shimDevices.inputs?.find(d => d.name === inputName);
-  const outputInfo = shimDevices.outputs?.find(d => d.name === outputName);
-
-  // Input: getUserMedia with the specific deviceId and ask for max channels
-  let inCount = 2;
-  if (inputInfo?.deviceId) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: { exact: inputInfo.deviceId }, channelCount: { ideal: 32 } },
-      });
-      inCount = stream.getTracks()[0].getSettings().channelCount || 2;
-      stream.getTracks().forEach(t => t.stop());
-    } catch (_) {}
-  }
-
-  // Output: AudioContext.setSinkId then read destination.maxChannelCount
-  let outCount = 2;
-  if (outputInfo?.deviceId) {
-    try {
-      const ac = new AudioContext();
-      if (typeof ac.setSinkId === 'function') {
-        await ac.setSinkId(outputInfo.deviceId);
-        outCount = ac.destination.maxChannelCount || 2;
-      }
-      await ac.close();
-    } catch (_) {}
-  }
-
-  return { inCount, outCount };
+// Look up channel counts from shim device info (CPAL — accurate for multi-channel interfaces)
+function queryChannelCounts(inputName, outputName) {
+  const inDev = shimDevices.inputs?.find(d => d.name === inputName);
+  const outDev = shimDevices.outputs?.find(d => d.name === outputName);
+  return {
+    inCount: inDev?.channels || 2,
+    outCount: outDev?.channels || 2,
+  };
 }
 
 // Rebuild all per-line channel dropdowns to match device capabilities
@@ -146,7 +131,7 @@ async function init() {
   populateDeviceDropdown(document.getElementById('input-device-select'), shimDevices.inputs, 'input_device');
   populateDeviceDropdown(document.getElementById('output-device-select'), shimDevices.outputs, 'output_device');
   // Set channel dropdowns to match the currently configured devices
-  const counts = await queryChannelCounts(config.input_device, config.output_device);
+  const counts = queryChannelCounts(config.input_device, config.output_device);
   inputChannelCount = counts.inCount;
   outputChannelCount = counts.outCount;
   updateChannelDropdowns();
@@ -356,7 +341,7 @@ function setupSettings() {
     const isCustom = preset.value === 'custom';
     config.vdo_base_url = isCustom ? customUrl.value.trim() : 'https://vdo.ninja';
     // Update channel counts before saving so clamped values are persisted
-    const counts = await queryChannelCounts(config.input_device, config.output_device);
+    const counts = queryChannelCounts(config.input_device, config.output_device);
     inputChannelCount = counts.inCount;
     outputChannelCount = counts.outCount;
     updateChannelDropdowns();

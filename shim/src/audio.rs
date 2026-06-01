@@ -17,17 +17,38 @@ pub struct AudioStreams {
     _output: cpal::Stream,
 }
 
-pub fn list_input_devices() -> Vec<String> {
+pub struct DeviceInfo {
+    pub name: String,
+    pub channels: u16,
+}
+
+fn max_input_channels(device: &cpal::Device) -> u16 {
+    device.supported_input_configs()
+        .map(|cfgs| cfgs.map(|c| c.channels()).max().unwrap_or(1))
+        .unwrap_or(1)
+}
+
+fn max_output_channels(device: &cpal::Device) -> u16 {
+    device.supported_output_configs()
+        .map(|cfgs| cfgs.map(|c| c.channels()).max().unwrap_or(1))
+        .unwrap_or(1)
+}
+
+pub fn list_input_devices() -> Vec<DeviceInfo> {
     let host = cpal::default_host();
     host.input_devices()
-        .map(|devs| devs.filter_map(|d| d.name().ok()).collect())
+        .map(|devs| devs.filter_map(|d| {
+            Some(DeviceInfo { channels: max_input_channels(&d), name: d.name().ok()? })
+        }).collect())
         .unwrap_or_default()
 }
 
-pub fn list_output_devices() -> Vec<String> {
+pub fn list_output_devices() -> Vec<DeviceInfo> {
     let host = cpal::default_host();
     host.output_devices()
-        .map(|devs| devs.filter_map(|d| d.name().ok()).collect())
+        .map(|devs| devs.filter_map(|d| {
+            Some(DeviceInfo { channels: max_output_channels(&d), name: d.name().ok()? })
+        }).collect())
         .unwrap_or_default()
 }
 
