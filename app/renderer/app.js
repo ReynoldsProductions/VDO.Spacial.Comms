@@ -50,9 +50,11 @@ async function enumerateAudioDevices() {
     // Request mic permission so device labels are populated (Chromium hides labels without it)
     await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
     const all = await navigator.mediaDevices.enumerateDevices();
+    const seen = new Set();
     return all
-      .filter(d => d.kind === 'audioinput' && d.label)
-      .map(d => d.label);
+      .filter(d => (d.kind === 'audioinput' || d.kind === 'audiooutput') && d.label)
+      .map(d => d.label)
+      .filter(label => seen.has(label) ? false : seen.add(label));
   } catch (_) {
     return [];
   }
