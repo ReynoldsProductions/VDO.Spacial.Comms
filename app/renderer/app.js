@@ -1,4 +1,12 @@
 let config = null;
+
+function showQrFallback(canvas, url) {
+  // Replace the canvas with a plain-text "QR unavailable" placeholder
+  const placeholder = document.createElement('div');
+  placeholder.style.cssText = 'width:120px;height:120px;display:flex;align-items:center;justify-content:center;background:#2a2a2a;border-radius:4px;font-size:11px;color:#888;text-align:center;padding:8px;';
+  placeholder.textContent = 'QR unavailable';
+  canvas.parentNode.replaceChild(placeholder, canvas);
+}
 let shimDevices = []; // device names received from shim on connect
 const lineStates = {}; // { [id]: { connected: boolean } }
 
@@ -37,9 +45,15 @@ function populateDeviceDropdown(select, devices) {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 
+function updateDeviceLabel() {
+  const label = document.getElementById('device-label');
+  if (label) label.textContent = config.audio_device ? `Device: ${config.audio_device}` : 'Device: Default';
+}
+
 async function init() {
   config = await window.api.getConfig();
   connectShim();
+  updateDeviceLabel();
   renderLines();
   setupSettings();
 }
@@ -80,8 +94,8 @@ function renderLines() {
     panel.id = `line-${line.id}`;
 
     panel.innerHTML = `
-      <h2>${line.name}</h2>
-      <div class="room-key">${line.room_key}</div>
+      <h2><span class="editable-name" data-line="${line.id}" contenteditable="true" spellcheck="false">${line.name}</span></h2>
+      <div class="location-row"><span class="editable-location" data-line="${line.id}" contenteditable="true" spellcheck="false" data-placeholder="Location…">${line.location || ''}</span></div>
       <div class="meter"><div class="meter-bar" id="meter-${line.id}"></div></div>
       <div class="channel-row">
         <label>In</label>
@@ -118,10 +132,19 @@ function renderLines() {
     container.appendChild(panel);
   });
 
-  // QR codes
+  // QR codes — guarded so a missing/broken QRCode library doesn't crash init
   config.lines.forEach((line) => {
     const canvas = document.getElementById(`qr-${line.id}`);
-    if (canvas) QRCode.toCanvas(canvas, joinUrl(line), { width: 120, margin: 1, color: { dark: '#000', light: '#fff' } });
+    if (!canvas) return;
+    if (typeof QRCode !== 'undefined') {
+      try {
+        QRCode.toCanvas(canvas, joinUrl(line), { width: 120, margin: 1, color: { dark: '#000', light: '#fff' } });
+      } catch (err) {
+        showQrFallback(canvas, joinUrl(line));
+      }
+    } else {
+      showQrFallback(canvas, joinUrl(line));
+    }
   });
 
   // Channel select listeners
@@ -155,6 +178,29 @@ function renderLines() {
       }
       window.api.saveConfig(config);
     });
+  });
+
+  // Inline-editable name (h2)
+  document.querySelectorAll('.editable-name').forEach((el) => {
+    el.addEventListener('blur', () => {
+      const id = parseInt(el.dataset.line);
+      const val = el.textContent.trim() || `PL${id + 1}`;
+      el.textContent = val;
+      const line = config.lines.find((l) => l.id === id);
+      if (line) { line.name = val; window.api.saveConfig(config); }
+    });
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
+  });
+
+  // Inline-editable location
+  document.querySelectorAll('.editable-location').forEach((el) => {
+    el.addEventListener('blur', () => {
+      const id = parseInt(el.dataset.line);
+      const val = el.textContent.trim();
+      const line = config.lines.find((l) => l.id === id);
+      if (line) { line.location = val; window.api.saveConfig(config); }
+    });
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
   });
 }
 
@@ -227,6 +273,7 @@ function setupSettings() {
     const isCustom = preset.value === 'custom';
     config.vdo_base_url = isCustom ? customUrl.value.trim() : 'https://vdo.ninja';
     await window.api.saveConfig(config);
+    updateDeviceLabel();
     overlay.classList.remove('open');
     // Refresh join links and QR codes
     config.lines.forEach((line) => {
@@ -234,7 +281,11 @@ function setupSettings() {
       const input = document.getElementById(`join-${line.id}`);
       if (input) input.value = url;
       const canvas = document.getElementById(`qr-${line.id}`);
-      if (canvas) QRCode.toCanvas(canvas, url, { width: 120, margin: 1, color: { dark: '#000', light: '#fff' } });
+      if (canvas && typeof QRCode !== 'undefined') {
+        try {
+          QRCode.toCanvas(canvas, url, { width: 120, margin: 1, color: { dark: '#000', light: '#fff' } });
+        } catch (_) { /* QR generation failed, leave as-is */ }
+      }
     });
   });
 }
