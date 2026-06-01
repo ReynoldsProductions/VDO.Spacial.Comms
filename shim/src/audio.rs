@@ -117,15 +117,18 @@ pub fn start(input_substr: &str, output_substr: &str, sample_rate: u32) -> Resul
     let out_ch = (max_output_channels(&output_dev) as usize).min(CHANNEL_COUNT).max(1);
     tracing::info!("opening input with {in_ch} ch, output with {out_ch} ch");
 
+    // Request 480-sample (10ms) buffers for steady frame delivery.
+    // CoreAudio may round to the nearest supported size but will stay close.
+    // Using Default often yields 4096+ samples, causing bursty delivery and stutter.
     let in_config = StreamConfig {
         channels: in_ch as u16,
         sample_rate: cpal::SampleRate(sample_rate),
-        buffer_size: cpal::BufferSize::Default,
+        buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
     };
     let out_config = StreamConfig {
         channels: out_ch as u16,
         sample_rate: cpal::SampleRate(sample_rate),
-        buffer_size: cpal::BufferSize::Default,
+        buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
     };
 
     let mut cap_producers: Vec<HeapProducer<f32>> = Vec::new();
