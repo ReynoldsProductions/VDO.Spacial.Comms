@@ -39,17 +39,44 @@ function buildShimScript(channelId) {
         class ShimProcessor extends AudioWorkletProcessor {
           constructor() {
             super();
-            this._q = [];
-            this._ready = false; // hold until we have 2 frames buffered (40ms)
+            // Ring buffer: 8 frames × 480 samples = 3840 samples (80ms at 48kHz)
+            const CAP = 3840;
+            this._buf = new Float32Array(CAP);
+            this._head = 0; // read pointer
+            this._tail = 0; // write pointer
+            this._size = 0; // occupied samples
+            this._cap = CAP;
+            this._ready = false; // hold output until 4 frames (1920 samples = 40ms) buffered
+            this._underruns = 0;
             this.port.onmessage = (e) => {
-              for (let i = 0; i < e.data.length; i++) this._q.push(e.data[i]);
-              if (!this._ready && this._q.length >= 960) this._ready = true;
+              const data = e.data; // Float32Array slice
+              for (let i = 0; i < data.length; i++) {
+                if (this._size < this._cap) {
+                  this._buf[this._tail] = data[i];
+                  this._tail = (this._tail + 1) % this._cap;
+                  this._size++;
+                }
+                // if full, drop the sample (back-pressure)
+              }
+              if (!this._ready && this._size >= 1920) this._ready = true;
             };
           }
           process(inputs, outputs) {
             const out = outputs[0][0];
             if (!this._ready) { out.fill(0); return true; }
-            for (let i = 0; i < out.length; i++) out[i] = this._q.length ? this._q.shift() : 0;
+            for (let i = 0; i < out.length; i++) {
+              if (this._size > 0) {
+                out[i] = this._buf[this._head];
+                this._head = (this._head + 1) % this._cap;
+                this._size--;
+              } else {
+                out[i] = 0;
+                this._underruns++;
+                if (this._underruns % 128 === 1) {
+                  this.port.postMessage({ underrun: true, count: this._underruns });
+                }
+              }
+            }
             return true;
           }
         }
@@ -60,6 +87,14 @@ function buildShimScript(channelId) {
       URL.revokeObjectURL(blobUrl);
 
       const node = new AudioWorkletNode(audioCtx, 'shim-proc', { outputChannelCount: [1] });
+
+      // Log underrun events from the AudioWorklet
+      node.port.onmessage = (e) => {
+        if (e.data && e.data.underrun) {
+          console.warn('[shim-bridge] audio underrun #' + e.data.count + ' on channel ' + CHANNEL_ID);
+        }
+      };
+
       const dest = audioCtx.createMediaStreamDestination();
       node.connect(dest);
 
@@ -67,7 +102,12 @@ function buildShimScript(channelId) {
       const ws = new WebSocket('ws://127.0.0.1:9696');
       const ok = await new Promise(resolve => {
         const t = setTimeout(() => { ws.close(); resolve(false); }, 10000);
-        ws.addEventListener('open', () => { clearTimeout(t); resolve(true); });
+        ws.addEventListener('open', async () => {
+          clearTimeout(t);
+          // Resume AudioContext here too — autoplay policy may have blocked the earlier resume()
+          await audioCtx.resume();
+          resolve(true);
+        });
         ws.addEventListener('error', () => { clearTimeout(t); resolve(false); });
       });
 
@@ -91,7 +131,10 @@ function buildShimScript(channelId) {
         }
       };
 
-      console.log('[shim-bridge] ready — channel', CHANNEL_ID);
+      // Final resume before handing stream to getUserMedia — ensures AudioContext
+      // is running even if both earlier resume() calls were blocked by autoplay policy.
+      await audioCtx.resume();
+      console.log('[shim-bridge] ready — channel', CHANNEL_ID, '— AudioContext state:', audioCtx.state);
       _resolveStream(dest.stream);
     } catch (err) {
       console.error('[shim-bridge] init failed:', err.message);
