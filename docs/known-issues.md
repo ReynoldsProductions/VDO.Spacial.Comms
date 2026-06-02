@@ -1,61 +1,58 @@
-# Known Issues & Next Steps
+# Known Issues & Status
 
-## Outstanding: VDO.ninja auto-join parameters
-
-**Status:** Unverified as of 2026-06-01.
-
-The `joinUrl()` function in `app/renderer/app.js` generates the URL used by the hidden `WebContentsView` when Connect is clicked. The intended behaviour is that the view silently joins the VDO.ninja room as an audio-only participant — appearing in the director view with no UI interaction required.
-
-Current URL shape:
-```
-https://vdo.ninja/?room=ROOMKEY&webcam=1&vd=0&videodevice=0&autostart=1&label=NAME&monomic=1&proaudio=1&...
-```
-
-**What we know:**
-- Without `&webcam`, VDO.ninja shows a "Join with Microphone / Screenshare" choice screen and never auto-joins.
-- `&autostart` only bypasses the device-selection step *after* join mode is chosen — `&webcam` is required alongside it.
-- `&vd=0` and `&videodevice=0` should disable the camera feed.
-
-**What needs to be confirmed:**
-- Does `&webcam=1&vd=0&autostart=1` actually result in a silent audio-only join with no UI? Needs testing by loading the URL in a real browser.
-- If VDO.ninja still shows UI, the alternative is `&push=STREAMID` which is the "push a stream" mode and may auto-start without any selection screen. Investigate `&push` as a fallback.
-- The `WebContentsView` is 1×1px off-screen — confirm Chromium activates `getUserMedia` at that size. If not, try a larger hidden bounds like 320×240 placed off-screen (`x: -400, y: -400`).
+**Last updated:** 2026-06-02 — build 28
 
 ---
 
-## Shim audio → VDO.ninja bridge
+## Resolved (build 28)
 
-**Status:** Implemented (2026-06-01). Needs end-to-end test with hardware.
+### Shim → VDO.ninja AudioWorklet bridge
+**Fixed.** The bridge is working and stable as of build 28.
 
-`buildShimScript(channelId)` in `app/main.js` is injected into each `WebContentsView` on `dom-ready` (before VDO.ninja calls `getUserMedia`). It:
+Root causes found and fixed during debugging:
+- **Shared ring buffer contention** — the renderer's device-enumeration WebSocket connection and the per-line preload's audio WebSocket both connected to port 9696 and competed for the same `HeapConsumer`. The preload was starved of audio frames. Fix: renderer closes its WS immediately after receiving the device list (code 1000).
+- **Timer-driven dispatch jitter** — the tokio 10ms interval missed ticks under load, causing burst/drain cycles visible as 3s audio / 3s silence. Fix: replaced with CPAL-event-driven broadcast dispatch. The CPAL callback packs frames and broadcasts directly; no software timer.
+- **JS ring buffer too small** — 80ms ring was exhausted by tokio scheduler jitter. Increased to 2s (96000 samples) with 500ms startup hold.
+- **DevTools flood** — underrun counter was per-sample (375 messages/sec when empty). Fixed to per-`process()` call.
+- **`Fixed(480)` CPAL buffer size** — broke on MacBook Pro Microphone (CoreAudio doesn't honour arbitrary buffer sizes on all devices). Reverted to `Default`; the accumulator + broadcast design makes buffer size irrelevant.
 
-1. Creates an `AudioContext` at 48 kHz
-2. Loads an `AudioWorkletProcessor` from a blob URL (no separate file needed)
-3. Opens `ws://127.0.0.1:9696` and feeds frames where `channel_id === channelId` into the worklet
-4. Overrides `navigator.mediaDevices.getUserMedia` so that when VDO.ninja requests audio, it receives the synthetic `MediaStreamDestinationNode` stream instead of the hardware mic
+### Network service crash loop
+**Fixed (build 22).** `lsof -ti tcp:9696` without `-s tcp:LISTEN` matched Chromium's outbound client connections to port 9696 along with the shim's listen socket, killing the network service. Fixed with `lsof -ti tcp:9696 -s tcp:LISTEN`.
 
-The `channelId` is `line.input_channel` (0-based index), passed through from the renderer via `window.api.connectLine(id, url, channelId)`.
-
-**What still needs testing:**
-- Confirm `[shim-bridge] ready — channel N` appears in the WebContentsView DevTools console on connect
-- Confirm VDO.ninja director view shows non-zero kbps for the connected line
-- The reverse path (VDO.ninja → shim playback producer) is not yet wired
+### Mic change not taking effect
+**Fixed (build 28).** When the shim restarts after a device change, active lines now automatically reconnect — getting a fresh WebSocket and preload to the new shim instance.
 
 ---
 
-## Electron app visible in director but shows muted / 0 kbps
+## Open
 
-If the shim bridge injected correctly (check DevTools console for `[shim-bridge] ready`), the most likely cause is that the shim WebSocket isn't running or has no audio signal on the selected channel. Confirm the shim process started (logged to Electron main process stdout) and that the hardware device is sending audio.
+### STUN/TURN DNS failures in logs
+`errorcode: -105` from `services/network/p2p/socket_manager.cc` — cosmetic. WebRTC falls back to host ICE candidates (direct LAN IP). Works on LAN without TURN. Will not traverse NAT without a TURN server.
+
+**Workaround for cross-NAT use:** self-host Coturn and configure it in VDO.ninja. See [docs/self-hosting.md](self-hosting.md).
+
+### `session.setPreloads` deprecation warning
+Should migrate to `session.registerPreloadScript`. Low priority — `setPreloads` still works in current Electron version.
+
+### App is unsigned
+Right-click → Open required on first launch on any macOS machine that hasn't run it before. Gatekeeper will block a normal double-click until the user explicitly allows it.
+
+### Outbound audio path only (shim → VDO.ninja)
+The reverse path — inbound audio from remote participants into the shim's playback ring for hardware output — is implemented in the Rust side (`playback_producers`) but not yet wired from the VDO.ninja WebContentsView back to the shim. Remote audio currently plays through Electron's default audio output device.
 
 ---
 
 ## Working
 
-- First-run setup wizard (event name + line names → deterministic room keys)
-- Session export/import (base64 code, Settings panel)
-- Per-line QR codes and join links (audio-only, `&webcam&vd=0&autostart`)
-- Director link per panel (`&director=ROOMKEY`)
-- Device enumeration (CPAL channel count probe for BlackHole-style virtual devices)
-- Channel dropdowns reflect actual hardware channel count
-- Room keys are permanent — renaming a line does not change its room
-- Port 9696 cleanup on app restart (`lsof -s tcp:LISTEN` targets only the shim's listening socket; Chromium client connections are no longer matched, eliminating the crash loop on shim restart — fixed build 22)
+- First-run setup wizard (event name + line names → permanent room keys)
+- Session export / import (base64 code, Settings panel)
+- Per-line QR codes and join links (audio-only, `&webcam=1&vd=0&autostart=1`)
+- Director link per panel (`&director=ROOMKEY`, opens in system browser)
+- Device enumeration (CPAL channel count probe — handles BlackHole-style virtual devices)
+- Settings dropdowns populated from shim device list (accurate channel counts)
+- Shim auto-starts on app launch, restarts on device change
+- Active lines reconnect after shim restart (mic change takes effect without manual reconnect)
+- Port 9696 cleanup — only the shim's LISTEN socket is killed, not Chromium client connections
+- AudioWorklet bridge: shim audio flows into VDO.ninja without hardware mic
+- 2s ring buffer + 500ms startup hold — stable under normal scheduler jitter
+- Build number in footer (v0.0.1 build N), auto-incremented on each DMG build

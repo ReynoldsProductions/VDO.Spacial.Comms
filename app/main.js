@@ -348,7 +348,6 @@ app.whenReady().then(() => {
     view.setBounds({ x: -400, y: -400, width: 320, height: 240 });
 
     view.webContents.loadURL(url);
-    view.webContents.openDevTools({ mode: 'detach' }); // TEMP: shim bridge diagnostics
     lineViews.set(id, view);
     lineConfigs.set(id, { url, channelId: channelId ?? 0 });
     console.log(`Line ${id} ch${channelId} connected: ${url}`);
