@@ -11,50 +11,19 @@ async function renderQr(id, url) {
     img.alt = 'QR unavailable';
   }
 }
-let shimDevices = []; // device names received from shim on connect
+let shimDevices = { inputs: [], outputs: [] };
 const lineStates = {}; // { [id]: { connected: boolean } }
 
-// ── Shim WebSocket ─────────────────────────────────────────────────────────
-
-let shimWs = null;
-
-function connectShim() {
-  const ws = new WebSocket('ws://127.0.0.1:9696');
-  // Close immediately after receiving the device list — this connection is
-  // only for the JSON device enumeration. Staying open drains the audio ring
-  // buffer that the shim bridge preload needs for audio frames.
-  ws.addEventListener('message', (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.msg_type === 'devices') {
-        ws.close();
-        if (!config) return;
-        const merge = (shimEntries, existing) => shimEntries.map(e => ({
-          name: e.name,
-          channels: e.channels,
-          deviceId: existing.find(d => {
-            const a = d.name.toLowerCase(), b = e.name.toLowerCase();
-            return a.includes(b) || b.includes(a);
-          })?.deviceId || '',
-        }));
-        shimDevices = {
-          inputs: merge(msg.input_devices || [], shimDevices.inputs || []),
-          outputs: merge(msg.output_devices || [], shimDevices.outputs || []),
-        };
-        populateDeviceDropdown(document.getElementById('input-device-select'), shimDevices.inputs, 'input_device');
-        populateDeviceDropdown(document.getElementById('output-device-select'), shimDevices.outputs, 'output_device');
-        const c = queryChannelCounts(config.input_device, config.output_device);
-        inputChannelCount = c.inCount;
-        outputChannelCount = c.outCount;
-        updateChannelDropdowns();
-      }
-    } catch (_) { /* binary audio frame — not for this connection */ }
-  });
-  ws.addEventListener('close', (e) => {
-    // Only retry if this was an unexpected close (not our own ws.close())
-    if (e.code !== 1000) setTimeout(connectShim, 2000);
-  });
-  ws.addEventListener('error', () => setTimeout(connectShim, 2000));
+async function connectShim() {
+  const devices = await window.api.listAudioDevices();
+  shimDevices = {
+    inputs:  devices.filter(d => d.inChannels  > 0).map(d => ({
+      name: d.name, uid: d.uid, channels: d.inChannels,
+    })),
+    outputs: devices.filter(d => d.outChannels > 0).map(d => ({
+      name: d.name, uid: d.uid, channels: d.outChannels,
+    })),
+  };
 }
 
 // devices is [{name, deviceId}] or [string] — normalises both
@@ -71,41 +40,17 @@ function populateDeviceDropdown(select, devices, configKey) {
   });
 }
 
-// Enumerate audio devices — returns {name, deviceId} objects so channel counts can be queried
-async function enumerateAudioDevices() {
-  try {
-    await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
-    const all = await navigator.mediaDevices.enumerateDevices();
-    const seen = (kind) => {
-      const names = new Set();
-      return all
-        .filter(d => d.kind === kind && d.label)
-        .filter(d => names.has(d.label) ? false : names.add(d.label))
-        .map(d => ({ name: d.label, deviceId: d.deviceId }));
-    };
-    return { inputs: seen('audioinput'), outputs: seen('audiooutput') };
-  } catch (_) {
-    return { inputs: [], outputs: [] };
-  }
-}
-
-// Look up channel counts from shim device info (CPAL — accurate for multi-channel interfaces).
-// Uses substring matching because CPAL and Web Audio API report different names for the same
-// device on macOS (e.g. "BlackHole 16ch" vs "BlackHole 16ch (Virtual)").
 function queryChannelCounts(inputName, outputName) {
-  const fuzzy = (devices, name) => {
-    if (!name || !devices) return null;
-    const a = name.toLowerCase();
-    return devices.find(d => {
-      const b = d.name.toLowerCase();
-      return a.includes(b) || b.includes(a);
-    });
+  const findDev = (list, name) => {
+    if (!name || !list) return null;
+    return list.find(d => d.name === name) ||
+      list.find(d => d.name.toLowerCase().includes(name.toLowerCase()));
   };
-  const inDev = fuzzy(shimDevices.inputs, inputName);
-  const outDev = fuzzy(shimDevices.outputs, outputName);
+  const inDev  = findDev(shimDevices.inputs,  inputName);
+  const outDev = findDev(shimDevices.outputs, outputName);
   return {
-    inCount: inDev?.channels || 2,
-    outCount: outDev?.channels || 2,
+    inCount:  inDev  ? inDev.channels  : 2,
+    outCount: outDev ? outDev.channels : 2,
   };
 }
 
@@ -142,22 +87,24 @@ async function init() {
   config = await window.api.getConfig();
   const meta = await window.api.getBuildMeta();
   document.getElementById('build-label').textContent = `v${meta.version} build ${meta.build}`;
-  connectShim();
+  await connectShim();
   updateDeviceLabel();
   setupSettings();
   if (firstRun) {
     await showSetupWizard();
   }
   renderLines();
-  // Populate device lists immediately from Web Audio API — shim may not be running yet
-  shimDevices = await enumerateAudioDevices();
   populateDeviceDropdown(document.getElementById('input-device-select'), shimDevices.inputs, 'input_device');
   populateDeviceDropdown(document.getElementById('output-device-select'), shimDevices.outputs, 'output_device');
-  // Set channel dropdowns — honour saved overrides, fall back to detected
   const counts = queryChannelCounts(config.input_device, config.output_device);
   inputChannelCount = config.input_channels_override || counts.inCount;
   outputChannelCount = config.output_channels_override || counts.outCount;
   updateChannelDropdowns();
+  // Auto-start capture if a device is already configured
+  if (config.input_device) {
+    const inDev = shimDevices.inputs.find(d => d.name === config.input_device);
+    if (inDev) window.api.startAudioCapture(inDev.uid, inDev.channels).catch(() => {});
+  }
 }
 
 function channelOptions(selected, count = 16) {
@@ -500,7 +447,7 @@ function setupSettings() {
     customRow.style.display = isCustom ? 'flex' : 'none';
     testStatus.textContent = '';
     // Re-enumerate on open so newly connected devices appear
-    shimDevices = await enumerateAudioDevices();
+    await connectShim();
     populateDeviceDropdown(document.getElementById('input-device-select'), shimDevices.inputs, 'input_device');
     populateDeviceDropdown(document.getElementById('output-device-select'), shimDevices.outputs, 'output_device');
     // Show detected channel counts as hints; pre-fill overrides from config
@@ -583,7 +530,10 @@ function setupSettings() {
     outputChannelCount = outOverride || detected.outCount;
     updateChannelDropdowns();
     await window.api.saveConfig(config);
-    await window.api.restartShim();
+    if (config.input_device) {
+      const inDev = shimDevices.inputs.find(d => d.name === config.input_device);
+      if (inDev) await window.api.startAudioCapture(inDev.uid, inDev.channels);
+    }
     updateDeviceLabel();
     overlay.classList.remove('open');
     // Refresh join links and QR codes
