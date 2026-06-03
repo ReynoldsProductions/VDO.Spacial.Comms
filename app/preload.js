@@ -7,7 +7,9 @@ contextBridge.exposeInMainWorld('api', {
   generateQr: (text) => ipcRenderer.invoke('generate-qr', text),
   isFirstRun: () => ipcRenderer.invoke('is-first-run'),
   getBuildMeta: () => ipcRenderer.invoke('get-build-meta'),
-  restartShim: () => ipcRenderer.invoke('restart-shim'),
+  listAudioDevices: () => ipcRenderer.invoke('list-audio-devices'),
+  startAudioCapture: (uid, nCh) => ipcRenderer.invoke('start-audio-capture', uid, nCh),
+  stopAudioCapture: () => ipcRenderer.invoke('stop-audio-capture'),
   connectLine: (id, url, channelId) => ipcRenderer.invoke('connect-line', { id, url, channelId }),
   disconnectLine: (id) => ipcRenderer.invoke('disconnect-line', id),
 });

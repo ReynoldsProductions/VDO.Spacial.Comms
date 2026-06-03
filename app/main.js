@@ -1,8 +1,12 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, systemPreferences } = require('electron');
-const { spawn } = require('child_process');
+const { app, BrowserWindow, WebContentsView, webContents, ipcMain, session, shell, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+
+const nativeAddonPath = app.isPackaged
+  ? path.join(process.resourcesPath, 'coreaudio.node')
+  : path.join(__dirname, 'native/build/Release/coreaudio.node');
+const coreAudio = require(nativeAddonPath);
 
 const CONFIG_PATH = path.join(os.homedir(), '.vdo-multichan', 'config.json');
 
@@ -12,14 +16,9 @@ function buildShimScript(channelId) {
   const CHANNEL_ID = ${channelId};
   const SAMPLE_RATE = 48000;
 
-  // Promise that resolves to the shim MediaStream, or null if unavailable.
-  // Created synchronously so the getUserMedia override can await it even if
-  // VDO.ninja calls getUserMedia before async init finishes.
   let _resolveStream;
   const _streamPromise = new Promise(r => { _resolveStream = r; });
 
-  // Override installed synchronously — guaranteed to be in place before any
-  // VDO.ninja script runs because this is a preload.
   const _origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
   navigator.mediaDevices.getUserMedia = async function(constraints) {
     if (constraints && constraints.audio) {
@@ -29,9 +28,9 @@ function buildShimScript(channelId) {
     return _origGUM(constraints);
   };
 
-  // Async init — resolves _streamPromise when ready (or null on failure).
   (async function() {
     try {
+      const { ipcRenderer } = require('electron');
       const audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
       await audioCtx.resume();
 
@@ -39,16 +38,12 @@ function buildShimScript(channelId) {
         class ShimProcessor extends AudioWorkletProcessor {
           constructor() {
             super();
-            // 2-second ring buffer — large enough to absorb tokio scheduler jitter
-            // and WebSocket write latency without underrunning.
             const CAP = 96000;
             this._buf = new Float32Array(CAP);
             this._head = 0;
             this._tail = 0;
             this._size = 0;
             this._cap = CAP;
-            // Hold 500ms before starting output — gives the ring time to fill
-            // past the point where scheduler jitter can drain it.
             this._ready = false;
             this._underruns = 0;
             this.port.onmessage = (e) => {
@@ -94,7 +89,6 @@ function buildShimScript(channelId) {
 
       const node = new AudioWorkletNode(audioCtx, 'shim-proc', { outputChannelCount: [1] });
 
-      // Log underrun events from the AudioWorklet
       node.port.onmessage = (e) => {
         if (e.data && e.data.underrun) {
           console.warn('[shim-bridge] audio underrun #' + e.data.count + ' on channel ' + CHANNEL_ID);
@@ -104,45 +98,12 @@ function buildShimScript(channelId) {
       const dest = audioCtx.createMediaStreamDestination();
       node.connect(dest);
 
-      // Connect to shim — 10s timeout then fall back to native mic
-      const ws = new WebSocket('ws://127.0.0.1:9696');
-      const ok = await new Promise(resolve => {
-        const t = setTimeout(() => { ws.close(); resolve(false); }, 10000);
-        ws.addEventListener('open', async () => {
-          clearTimeout(t);
-          // Resume AudioContext here too — autoplay policy may have blocked the earlier resume()
-          await audioCtx.resume();
-          resolve(true);
-        });
-        ws.addEventListener('error', () => { clearTimeout(t); resolve(false); });
+      ipcRenderer.on('audio-frame', (_e, ch, samples) => {
+        if (ch === CHANNEL_ID) {
+          node.port.postMessage(samples);
+        }
       });
 
-      if (!ok) {
-        console.warn('[shim-bridge] unavailable — falling back to native mic (channel ${channelId})');
-        _resolveStream(null);
-        return;
-      }
-
-      ws.binaryType = 'arraybuffer';
-      ws.onmessage = (e) => {
-        if (!(e.data instanceof ArrayBuffer)) return;
-        // Multi-channel packet: [ch: u32 LE][n_samples: u32 LE][samples: f32[] LE] × N
-        const dv = new DataView(e.data);
-        let offset = 0;
-        while (offset + 8 <= e.data.byteLength) {
-          const ch = dv.getUint32(offset, true);
-          const n  = dv.getUint32(offset + 4, true);
-          offset += 8;
-          if (offset + n * 4 > e.data.byteLength) break;
-          if (ch === CHANNEL_ID) {
-            node.port.postMessage(new Float32Array(e.data, offset, n));
-          }
-          offset += n * 4;
-        }
-      };
-
-      // Final resume before handing stream to getUserMedia — ensures AudioContext
-      // is running even if both earlier resume() calls were blocked by autoplay policy.
       await audioCtx.resume();
       console.log('[shim-bridge] ready — channel', CHANNEL_ID, '— AudioContext state:', audioCtx.state);
       _resolveStream(dest.stream);
@@ -154,11 +115,6 @@ function buildShimScript(channelId) {
 })();
 `;
 }
-// In a packaged app the shim lands in Contents/Resources/shim (via extraResources).
-// In dev it lives at ../shim/target/release/shim relative to app/.
-const SHIM_BIN = app.isPackaged
-  ? path.join(process.resourcesPath, 'shim')
-  : path.join(__dirname, '..', 'shim', 'target', 'release', 'shim');
 
 const DEFAULT_CONFIG = {
   instance_name: 'default',
@@ -195,75 +151,15 @@ function saveConfig(cfg) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
 }
 
-let shimProcess = null;
 // Map of line id → WebContentsView for active VDO.ninja connections
 const lineViews = new Map();
-// Track connect args so lines can be reconnected after a shim restart
+// Track connect args so lines can be reconnected if needed
 const lineConfigs = new Map(); // id → { url, channelId }
+const channelViews = new Map(); // channelId -> WebContents ID
 let mainWin = null;
 
 // Capture first-run state before loadConfig() creates the file
 const FIRST_RUN = !fs.existsSync(CONFIG_PATH);
-
-function killPortAndStartShim() {
-  if (!fs.existsSync(SHIM_BIN)) {
-    console.warn('Shim binary not found at', SHIM_BIN, '— audio I/O disabled');
-    return;
-  }
-  // Ensure executable bit is set — macOS may strip it when copying from DMG
-  try { fs.chmodSync(SHIM_BIN, 0o755); } catch (_) {}
-  // Kill only the LISTENING process on 9696 (the old shim server).
-  // Without -s tcp:LISTEN this also matches Chromium's client sockets to port
-  // 9696, killing the network service and causing a crash loop.
-  if (shimProcess) { try { shimProcess.kill('SIGTERM'); } catch (_) {} shimProcess = null; }
-  const killer = spawn('lsof', ['-ti', 'tcp:9696', '-s', 'tcp:LISTEN']);
-  let pids = '';
-  killer.stdout.on('data', d => { pids += d.toString(); });
-  killer.on('close', () => {
-    pids.trim().split('\n').filter(Boolean).forEach(pid => {
-      try { process.kill(parseInt(pid), 'SIGTERM'); } catch (_) {}
-    });
-    // Small delay to let the port release
-    setTimeout(() => {
-      shimProcess = spawn(SHIM_BIN, [], { stdio: ['ignore', 'pipe', 'pipe'] });
-      shimProcess.stdout.on('data', d => process.stdout.write('[shim] ' + d));
-      shimProcess.stderr.on('data', d => process.stderr.write('[shim] ' + d));
-      shimProcess.on('error', err => console.error('[shim] spawn error:', err.message));
-      shimProcess.on('exit', (code, sig) => console.log(`[shim] exited code=${code} sig=${sig}`));
-      // Reconnect all active lines so their preloads get a fresh WebSocket to the new shim.
-      // Wait 1s for the shim to finish binding its WebSocket port before reconnecting.
-      if (lineConfigs.size > 0) {
-        setTimeout(() => {
-          console.log(`[shim] reconnecting ${lineConfigs.size} active line(s) to new shim`);
-          for (const [id, cfg] of lineConfigs) {
-            const view = lineViews.get(id);
-            if (view) {
-              mainWin.contentView.removeChildView(view);
-              try { fs.unlinkSync(path.join(app.getPath('temp'), `shim-preload-${id}.js`)); } catch (_) {}
-              view.webContents.close();
-              lineViews.delete(id);
-            }
-            // Reconnect: reuse the same session so VDO.ninja stays logged in,
-            // but write a fresh preload so the new WebSocket is opened.
-            const preloadPath = path.join(app.getPath('temp'), `shim-preload-${id}.js`);
-            fs.writeFileSync(preloadPath, buildShimScript(cfg.channelId ?? 0));
-            const lineSes = session.fromPartition(`persist:line-${id}`);
-            lineSes.setPreloads([preloadPath]);
-            const view2 = new WebContentsView({
-              webPreferences: { session: lineSes, contextIsolation: false, autoplayPolicy: 'no-user-gesture-required' },
-            });
-            view2.webContents.setAudioMuted(false);
-            mainWin.contentView.addChildView(view2);
-            view2.setBounds({ x: -400, y: -400, width: 320, height: 240 });
-            view2.webContents.loadURL(cfg.url);
-            lineViews.set(id, view2);
-            console.log(`Line ${id} ch${cfg.channelId} reconnected after shim restart`);
-          }
-        }, 1000);
-      }
-    }, 300);
-  });
-}
 
 app.whenReady().then(() => {
   // Grant mic + camera permission for all web contents (renderer + VDO.ninja views)
@@ -291,8 +187,7 @@ app.whenReady().then(() => {
     });
   }
 
-  const config = loadConfig();
-  killPortAndStartShim();
+  loadConfig();
 
   mainWin = new BrowserWindow({
     width: 1200,
@@ -350,6 +245,7 @@ app.whenReady().then(() => {
     view.webContents.loadURL(url);
     lineViews.set(id, view);
     lineConfigs.set(id, { url, channelId: channelId ?? 0 });
+    channelViews.set(channelId ?? 0, view.webContents.id);
     console.log(`Line ${id} ch${channelId} connected: ${url}`);
   });
 
@@ -362,8 +258,28 @@ app.whenReady().then(() => {
     view.webContents.close();
     lineViews.delete(id);
     lineConfigs.delete(id);
+    for (const [ch, wcId] of channelViews) {
+      if (wcId === view.webContents.id) channelViews.delete(ch);
+    }
     console.log(`Line ${id} disconnected`);
   });
+
+  // CoreAudio IPC handlers
+  ipcMain.handle('list-audio-devices', () => coreAudio.listDevices());
+
+  ipcMain.handle('start-audio-capture', (_e, deviceUID, nChannels) => {
+    if (coreAudio.isRunning?.()) coreAudio.stopCapture();
+    coreAudio.startCapture(deviceUID, nChannels, (ch, samples) => {
+      const wcId = channelViews.get(ch);
+      if (wcId == null) return;
+      const wc = webContents.fromId(wcId);
+      if (wc && !wc.isDestroyed()) {
+        wc.send('audio-frame', ch, samples);
+      }
+    });
+  });
+
+  ipcMain.handle('stop-audio-capture', () => coreAudio.stopCapture());
 
   // IPC handlers
   ipcMain.handle('generate-qr', async (_, text) => {
@@ -372,7 +288,6 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('get-config', () => loadConfig());
   ipcMain.handle('save-config', (_, cfg) => { saveConfig(cfg); return true; });
-  ipcMain.handle('restart-shim', () => killPortAndStartShim());
   ipcMain.handle('test-vdo-url', async (_, url) => {
     try {
       const { net } = require('electron');
@@ -389,6 +304,5 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (shimProcess) shimProcess.kill();
   app.quit();
 });
