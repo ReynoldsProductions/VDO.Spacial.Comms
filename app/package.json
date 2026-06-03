@@ -13,7 +13,6 @@
     "electron-builder": "^25.1.8"
   },
   "dependencies": {
-    "ws": "^8.16.0",
     "qrcode": "^1.5.4"
   },
   "build": {
@@ -28,8 +27,8 @@
     ],
     "extraResources": [
       {
-        "from": "../shim/target/release/shim",
-        "to": "shim"
+        "from": "native/build/Release/coreaudio.node",
+        "to": "coreaudio.node"
       }
     ],
     "mac": {
