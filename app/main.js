@@ -286,10 +286,10 @@ const DEFAULT_CONFIG = {
   webrtc_stun_only: false,
   webrtc_lan_mode: true,
   lines: [
-    { id: 0, name: 'PL1', group: '1', input_channel: 0, output_channel: 0, gain_in: 1.0, gain_out: 1.0 },
-    { id: 1, name: 'PL2', group: '2', input_channel: 1, output_channel: 1, gain_in: 1.0, gain_out: 1.0 },
-    { id: 2, name: 'PL3', group: '3', input_channel: 2, output_channel: 2, gain_in: 1.0, gain_out: 1.0 },
-    { id: 3, name: 'PL4', group: '4', input_channel: 3, output_channel: 3, gain_in: 1.0, gain_out: 1.0 },
+    { id: 0, name: 'PL1', group: '1', input_channel: 0, output_channel: 0, gain_in: 1.0, gain_out: 1.0, input_device_uid: null, output_device_uid: null },
+    { id: 1, name: 'PL2', group: '2', input_channel: 1, output_channel: 1, gain_in: 1.0, gain_out: 1.0, input_device_uid: null, output_device_uid: null },
+    { id: 2, name: 'PL3', group: '3', input_channel: 2, output_channel: 2, gain_in: 1.0, gain_out: 1.0, input_device_uid: null, output_device_uid: null },
+    { id: 3, name: 'PL4', group: '4', input_channel: 3, output_channel: 3, gain_in: 1.0, gain_out: 1.0, input_device_uid: null, output_device_uid: null },
   ],
 };
 
@@ -324,6 +324,8 @@ function migrateConfig(cfg) {
         line.group = groupFromName(line.name, line.id);
       }
     }
+    if (line.input_device_uid === undefined) line.input_device_uid = null;
+    if (line.output_device_uid === undefined) line.output_device_uid = null;
   }
   return cfg;
 }
@@ -347,6 +349,7 @@ const lineViews = new Map();
 // Track connect args so lines can be reconnected if needed
 const lineConfigs = new Map(); // id → { url, channelId }
 const channelViews = new Map(); // channelId -> WebContents ID
+const sessionViews = new Map(); // lineId (number) → webContentsId — for lines with own device session
 let mainWin = null;
 let captureActive = false;
 let playbackFrameCount = 0;
@@ -495,6 +498,8 @@ app.whenReady().then(() => {
 
     const cfg = loadConfig();
     const stripIce = cfg.webrtc_lan_mode !== false;
+    const line = cfg.lines.find(l => l.id === id);
+    const hasOwnDevices = !!(line?.input_device_uid && line?.output_device_uid);
 
     const tempDir = app.getPath('temp');
     const preloadPath = path.join(tempDir, `shim-line-${id}.js`);
@@ -512,9 +517,36 @@ app.whenReady().then(() => {
       outputChannel: outputChannel ?? 0,
       gainOut: gainOut ?? 1.0,
       group: group ?? '',
+      hasOwnSession: hasOwnDevices,
     });
-    channelViews.set(inputChannel ?? 0, view.webContents.id);
-    console.log(`Line ${id} in ch${inputChannel} → out ch${outputChannel} group=${group} lan=${stripIce}`);
+
+    if (hasOwnDevices) {
+      const sessionId = `pl-${id}`;
+      try {
+        coreAudio.startSession(
+          sessionId,
+          line.input_device_uid, 1,
+          line.output_device_uid, 1,
+          (ch, samples) => {
+            const wcId = sessionViews.get(id);
+            if (wcId == null) return;
+            const wc = webContents.fromId(wcId);
+            if (wc && !wc.isDestroyed()) wc.send('audio-frame', 0, samples);
+          }
+        );
+        sessionViews.set(id, view.webContents.id);
+        console.log(`Line ${id} own-session pl-${id} cap=${line.input_device_uid} pb=${line.output_device_uid} → out ch${outputChannel} group=${group} lan=${stripIce}`);
+      } catch (e) {
+        console.error(`startSession failed for PL ${id}:`, e.message);
+        // Fall through to shared session path
+        sessionViews.delete(id);
+        channelViews.set(inputChannel ?? 0, view.webContents.id);
+        console.log(`Line ${id} fell back to shared-session in ch${inputChannel} → out ch${outputChannel} group=${group} lan=${stripIce}`);
+      }
+    } else {
+      channelViews.set(inputChannel ?? 0, view.webContents.id);
+      console.log(`Line ${id} in ch${inputChannel} → out ch${outputChannel} group=${group} lan=${stripIce}`);
+    }
     console.log(`  url: ${url}`);
   });
 
@@ -523,14 +555,19 @@ app.whenReady().then(() => {
     if (!view) return;
     mainWin.contentView.removeChildView(view);
     view.webContents.close();
-    for (const [ch, wcId] of channelViews) {
-      if (wcId === view.webContents.id) channelViews.delete(ch);
+    const lineCfg = lineConfigs.get(id);
+    if (lineCfg?.hasOwnSession) {
+      try { coreAudio.stopSession(`pl-${id}`); } catch (_) {}
+      sessionViews.delete(id);
+    } else {
+      for (const [ch, wcId] of channelViews) {
+        if (wcId === view.webContents.id) channelViews.delete(ch);
+      }
     }
     const tempDir = app.getPath('temp');
     try { fs.unlinkSync(path.join(tempDir, `shim-line-${id}.js`)); } catch (_) {}
-    const cfg = lineConfigs.get(id);
-    if (cfg?.outputChannel != null) {
-      try { coreAudio.clearPlaybackChannel(cfg.outputChannel); } catch (_) {}
+    if (lineCfg?.outputChannel != null) {
+      try { coreAudio.clearPlaybackChannel(lineCfg.outputChannel); } catch (_) {}
     }
     lineViews.delete(id);
     lineConfigs.delete(id);
@@ -565,7 +602,7 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.on('playback-frame', (_e, outCh, samples, gain) => {
+  ipcMain.on('playback-frame', (event, outCh, samples, gain) => {
     try {
       let floats = samples;
       if (Buffer.isBuffer(samples)) {
@@ -583,10 +620,26 @@ app.whenReady().then(() => {
       }
       if (peak < 0.002) return;
       playbackPeaks.set(outCh, Math.max(playbackPeaks.get(outCh) || 0, peak));
-      coreAudio.pushPlaybackSamples(outCh, floats, gain ?? 1.0);
+
+      // Route to per-PL session if the sending view has its own session
+      let usedOwnSession = false;
+      for (const [lineId, view] of lineViews) {
+        if (view.webContents.id === event.sender.id) {
+          const lc = lineConfigs.get(lineId);
+          if (lc?.hasOwnSession) {
+            coreAudio.pushPlaybackSamples(`pl-${lineId}`, 0, floats, gain ?? 1.0);
+            usedOwnSession = true;
+          }
+          break;
+        }
+      }
+      if (!usedOwnSession) {
+        coreAudio.pushPlaybackSamples(outCh, floats, gain ?? 1.0);
+      }
+
       playbackFrameCount++;
       if (playbackFrameCount === 1 || playbackFrameCount % 500 === 0) {
-        console.log(`playback-frame batch #${playbackFrameCount} → out ch ${outCh} (${floats.length} samples, peak=${peak.toFixed(4)})`);
+        console.log(`playback-frame batch #${playbackFrameCount} → ${usedOwnSession ? `session pl-${[...lineViews.keys()].find(id => lineViews.get(id).webContents.id === event.sender.id)}` : `out ch ${outCh}`} (${floats.length} samples, peak=${peak.toFixed(4)})`);
       }
     } catch (err) {
       console.error('playback-frame error:', err.message);
