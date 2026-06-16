@@ -293,6 +293,8 @@ const DEFAULT_CONFIG = {
   webrtc_turn_off: false,
   webrtc_stun_only: false,
   webrtc_lan_mode: false,
+  room_locked: false,
+  lock_password: '',
   lines: [
     { id: 0, name: 'PL1', group: '1', input_channel: 0, output_channel: 0, gain_in: 1.0, gain_out: 1.0, input_device_uid: null, output_device_uid: null },
     { id: 1, name: 'PL2', group: '2', input_channel: 1, output_channel: 1, gain_in: 1.0, gain_out: 1.0, input_device_uid: null, output_device_uid: null },
@@ -322,6 +324,8 @@ function migrateConfig(cfg) {
   if (cfg.webrtc_turn_off == null)  cfg.webrtc_turn_off = false;
   if (cfg.webrtc_stun_only == null) cfg.webrtc_stun_only = false;
   if (cfg.webrtc_lan_mode == null)  cfg.webrtc_lan_mode = false;
+  if (cfg.room_locked == null)      cfg.room_locked = false;
+  if (cfg.lock_password == null)    cfg.lock_password = '';
   for (const line of cfg.lines || []) {
     if (!line.group) {
       if (line.room_key && cfg.comms_room && line.room_key.startsWith(cfg.comms_room)) {
