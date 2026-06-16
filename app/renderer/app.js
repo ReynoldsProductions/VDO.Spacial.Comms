@@ -272,6 +272,33 @@ function renderCommsBar() {
 
 function renderLines() {
   const container = document.getElementById('lines');
+
+  if (!container._deviceListenersAttached) {
+    container._deviceListenersAttached = true;
+
+    container.addEventListener('change', e => {
+      const el = e.target;
+      if (!el.matches('select[id^="dev-in-"]')) return;
+      const id = parseInt(el.dataset.line);
+      const line = config.lines.find(l => l.id === id);
+      if (line) {
+        line.input_device_uid = el.value || null;
+        window.api.saveConfig(config);
+      }
+    });
+
+    container.addEventListener('change', e => {
+      const el = e.target;
+      if (!el.matches('select[id^="dev-out-"]')) return;
+      const id = parseInt(el.dataset.line);
+      const line = config.lines.find(l => l.id === id);
+      if (line) {
+        line.output_device_uid = el.value || null;
+        window.api.saveConfig(config);
+      }
+    });
+  }
+
   container.innerHTML = '';
 
   config.lines.forEach((line) => {
@@ -340,30 +367,6 @@ function renderLines() {
       shimDevices.outputs,
       line.output_device_uid || ''
     );
-  });
-
-  // Device select listeners (input)
-  document.querySelectorAll('select[data-line][data-dir="in"][id^="dev-in-"]').forEach(el => {
-    el.addEventListener('change', e => {
-      const id = parseInt(e.target.dataset.line);
-      const line = config.lines.find(l => l.id === id);
-      if (line) {
-        line.input_device_uid = e.target.value || null;
-        window.api.saveConfig(config);
-      }
-    });
-  });
-
-  // Device select listeners (output)
-  document.querySelectorAll('select[data-line][data-dir="out"][id^="dev-out-"]').forEach(el => {
-    el.addEventListener('change', e => {
-      const id = parseInt(e.target.dataset.line);
-      const line = config.lines.find(l => l.id === id);
-      if (line) {
-        line.output_device_uid = e.target.value || null;
-        window.api.saveConfig(config);
-      }
-    });
   });
 
   // Channel select listeners
@@ -672,6 +675,18 @@ function setupSettings() {
     await connectShim();
     populateDeviceDropdown(document.getElementById('input-device-select'), shimDevices.inputs, 'input_device_uid', 'input_device');
     populateDeviceDropdown(document.getElementById('output-device-select'), shimDevices.outputs, 'output_device_uid', 'output_device');
+    config.lines.forEach(line => {
+      populateLineDeviceDropdown(
+        document.getElementById(`dev-in-${line.id}`),
+        shimDevices.inputs,
+        line.input_device_uid || ''
+      );
+      populateLineDeviceDropdown(
+        document.getElementById(`dev-out-${line.id}`),
+        shimDevices.outputs,
+        line.output_device_uid || ''
+      );
+    });
     // Show detected channel counts as hints; pre-fill overrides from config
     const detected = queryChannelCounts();
     document.getElementById('input-ch-detected').textContent = `(detected: ${detected.inCount})`;
