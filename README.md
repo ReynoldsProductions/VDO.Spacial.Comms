@@ -1,6 +1,6 @@
 # VDO.MultiCh.Comms
 
-> **Alpha — v0.1.3.** Not production-ready. Expect rough edges.
+> **Alpha — v0.1.4.** Not production-ready. Expect rough edges.
 
 Multi-channel IP intercom built on [VDO.ninja](https://vdo.ninja) (WebRTC) and macOS CoreAudio hardware I/O. Designed for live production environments where you need independent party lines routed to a multi-channel audio interface — without a separate audio daemon or WebSocket bridge.
 
@@ -16,7 +16,7 @@ Primary use case: bridging two buildings with hardware intercom systems over WAN
 
 ## Install
 
-1. Download `VDO.MultiCh.Comms-0.1.3-arm64.dmg` from the [Releases page](https://github.com/TomsFaire/VDO.MultiCh.Comms/releases)
+1. Download `VDO.MultiCh.Comms-0.1.4-arm64.dmg` from the [Releases page](https://github.com/TomsFaire/VDO.MultiCh.Comms/releases)
 2. Mount the DMG and drag the app to Applications
 3. **Right-click → Open** on first launch — the app is ad-hoc signed but not notarized; Gatekeeper blocks a normal double-click until you explicitly allow it
 
@@ -26,7 +26,7 @@ See [docs/usage.md](docs/usage.md) for a full walkthrough (setup wizard, Comms Q
 
 ---
 
-## What's new in v0.1.3
+## What's new in v0.1.4
 
 - **Per-PL audio device selection** — each party line can use its own input and output interface; assign a dedicated headset or belt-pack per line without sharing a multi-channel aggregate device
 - **Audio bleed fixes** — VDO.ninja `<video>`/`<audio>` elements are now silenced in each line's shim so remote audio can't leak through the system default output (e.g. MacBook speakers); shared-PL playback routing fixed to always target the correct CoreAudio session
@@ -34,6 +34,12 @@ See [docs/usage.md](docs/usage.md) for a full walkthrough (setup wizard, Comms Q
 - **Level meters** — mic (green) and remote (blue) level bars per line; yellow at 60%, red at 95%
 - **WebRTC config unlocked** — `webrtc_lan_mode`, `webrtc_turn_off`, and `webrtc_stun_only` were hardcoded to `false` on every launch; they now respect your config file. Default is WAN mode (TURN/STUN enabled) to support cross-building deployments
 - **Audio stability** — save-config no longer restarts CoreAudio mid-session; gain sliders save on release, not every drag frame
+
+### Also in v0.1.3
+
+- **Audio bleed fixes** — VDO.ninja media elements muted in shim; shared-PL playback routing fixed
+- **Gain range** — sliders raised to 10× (~+20 dB); red meter threshold at 95%
+- **WebRTC config unlocked** — LAN/WAN mode now user-configurable; WAN default
 
 ### Also in v0.1.1 (if upgrading from v0.1.0)
 
@@ -87,6 +93,8 @@ Remote audio (inbound)
 | Audio bleed isolation (shim element muting) | ✅ Done (v0.1.3) |
 | LAN / WAN WebRTC mode (configurable) | ✅ Done (v0.1.3) |
 | STUN/TURN (cross-NAT, WAN default) | ✅ Done (v0.1.3) |
+| Room name editable from Settings | ✅ Done (v0.1.4) |
+| Room lock (exclude new joiners) | ✅ Done (v0.1.4) |
 | Device enumeration from CoreAudio (channel counts) | ✅ Done |
 | Build number auto-bump + DMG packaging | ✅ Done |
 | macOS TCC microphone permission | ✅ Done |
