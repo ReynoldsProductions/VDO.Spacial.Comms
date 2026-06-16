@@ -187,9 +187,27 @@ function allGroups() {
 }
 
 function withPassword(params) {
-  if (config.comms_password) params.set('password', config.comms_password);
+  const pw = config.room_locked ? config.lock_password : config.comms_password;
+  if (pw) params.set('password', pw);
   return params;
 }
+
+function randomLockCode() {
+  return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+}
+
+async function toggleRoomLock() {
+  if (config.room_locked) {
+    config.room_locked = false;
+    config.lock_password = '';
+  } else {
+    config.room_locked = true;
+    config.lock_password = randomLockCode();
+  }
+  await window.api.saveConfig(config);
+  renderCommsBar();
+}
+
 
 function applyWebRtcParams(params) {
   if (config.webrtc_turn_off !== false) params.set('turn', 'off');
@@ -257,15 +275,28 @@ function renderCommsBar() {
   const joinInput = document.getElementById('comms-join-url');
   const dirLink = document.getElementById('comms-director-link');
   const buildHint = document.getElementById('comms-build-hint');
+  const lockBtn = document.getElementById('lock-room-btn');
+  const bar = document.getElementById('comms-bar');
+  const locked = !!config.room_locked;
   if (roomEl) roomEl.textContent = getCommsRoom();
   if (joinInput) joinInput.value = joinUrl;
   if (dirLink) dirLink.href = dirUrl;
+  if (lockBtn) {
+    lockBtn.textContent = locked ? 'Unlock room' : 'Lock room';
+    lockBtn.classList.toggle('locked', locked);
+    lockBtn.title = locked
+      ? 'Room is locked — new participants cannot join. Click to unlock.'
+      : 'Lock room to prevent new participants joining';
+  }
+  if (bar) bar.classList.toggle('room-locked', locked);
   if (buildHint && !joinUrl.includes('/comms?')) {
     buildHint.textContent = 'Warning: join URL is not a Comms link — reinstall the latest build.';
     buildHint.className = 'comms-warn';
   } else if (buildHint) {
-    buildHint.textContent = 'Mobile: tap a party-line button before talking (ungrouped audio goes to all lines).';
-    buildHint.className = 'comms-hint';
+    buildHint.textContent = locked
+      ? 'Room is locked — share a new link to allow additional participants.'
+      : 'Mobile: tap a party-line button before talking (ungrouped audio goes to all lines).';
+    buildHint.className = locked ? 'comms-warn' : 'comms-hint';
   }
   renderQr('comms', joinUrl);
 }
@@ -696,6 +727,7 @@ function setupSettings() {
     document.getElementById('output-ch-detected').textContent = `(detected: ${detected.outCount})`;
     document.getElementById('input-ch-override').value = config.input_channels_override || '';
     document.getElementById('output-ch-override').value = config.output_channels_override || '';
+    document.getElementById('comms-room-input').value = config.comms_room || '';
     document.getElementById('comms-password').value = config.comms_password || '';
     // Pre-populate export code
     document.getElementById('session-export-code').value = exportSession();
@@ -768,6 +800,14 @@ function setupSettings() {
     config.output_device = outDev?.name || '';
     const isCustom = preset.value === 'custom';
     config.vdo_base_url = isCustom ? customUrl.value.trim() : 'https://vdo.ninja';
+    const newRoom = sanitiseKey(document.getElementById('comms-room-input').value);
+    if (newRoom && newRoom !== config.comms_room) {
+      config.comms_room = newRoom;
+      config.instance_name = newRoom;
+      // Changing the room name invalidates any existing lock
+      config.room_locked = false;
+      config.lock_password = '';
+    }
     config.comms_password = document.getElementById('comms-password').value.trim();
     // Apply channel count overrides (or detected values from shim)
     const inOverride = parseInt(document.getElementById('input-ch-override').value) || 0;
