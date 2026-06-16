@@ -511,15 +511,8 @@ app.whenReady().then(() => {
     const view = createLineView(`persist:line-${id}`, preloadPath, url);
 
     lineViews.set(id, view);
-    lineConfigs.set(id, {
-      url,
-      inputChannel: inputChannel ?? 0,
-      outputChannel: outputChannel ?? 0,
-      gainOut: gainOut ?? 1.0,
-      group: group ?? '',
-      hasOwnSession: hasOwnDevices,
-    });
 
+    let actuallyHasOwnSession = false;
     if (hasOwnDevices) {
       const sessionId = `pl-${id}`;
       try {
@@ -534,12 +527,12 @@ app.whenReady().then(() => {
             if (wc && !wc.isDestroyed()) wc.send('audio-frame', 0, samples);
           }
         );
+        actuallyHasOwnSession = true;
         sessionViews.set(id, view.webContents.id);
         console.log(`Line ${id} own-session pl-${id} cap=${line.input_device_uid} pb=${line.output_device_uid} → out ch${outputChannel} group=${group} lan=${stripIce}`);
       } catch (e) {
         console.error(`startSession failed for PL ${id}:`, e.message);
         // Fall through to shared session path
-        sessionViews.delete(id);
         channelViews.set(inputChannel ?? 0, view.webContents.id);
         console.log(`Line ${id} fell back to shared-session in ch${inputChannel} → out ch${outputChannel} group=${group} lan=${stripIce}`);
       }
@@ -547,6 +540,15 @@ app.whenReady().then(() => {
       channelViews.set(inputChannel ?? 0, view.webContents.id);
       console.log(`Line ${id} in ch${inputChannel} → out ch${outputChannel} group=${group} lan=${stripIce}`);
     }
+
+    lineConfigs.set(id, {
+      url,
+      inputChannel: inputChannel ?? 0,
+      outputChannel: outputChannel ?? 0,
+      gainOut: gainOut ?? 1.0,
+      group: group ?? '',
+      hasOwnSession: actuallyHasOwnSession,
+    });
     console.log(`  url: ${url}`);
   });
 
@@ -685,6 +687,12 @@ app.whenReady().then(() => {
 });
 
 app.on('will-quit', () => {
+  // Stop all per-line sessions before the default session
+  for (const [lineId, lc] of lineConfigs) {
+    if (lc.hasOwnSession) {
+      try { coreAudio.stopSession(`pl-${lineId}`); } catch (_) {}
+    }
+  }
   try { coreAudio.stopAudio(); } catch (_) {}
 });
 
