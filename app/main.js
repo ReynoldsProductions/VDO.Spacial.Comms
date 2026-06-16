@@ -351,7 +351,14 @@ let mainWin = null;
 let captureActive = false;
 let playbackFrameCount = 0;
 
+const capturePeaks = new Map();   // ch (0-indexed) → running peak float
+const playbackPeaks = new Map();  // ch (0-indexed) → running peak float
+const LEVEL_DECAY = 0.85;         // applied each 33ms frame; ~1s to silence
+
 function captureCallback(ch, samples) {
+  let p = 0;
+  for (let i = 0; i < samples.length; i++) { const a = Math.abs(samples[i]); if (a > p) p = a; }
+  capturePeaks.set(ch, Math.max(capturePeaks.get(ch) || 0, p));
   const wcId = channelViews.get(ch);
   if (wcId == null) return;
   const wc = webContents.fromId(wcId);
@@ -440,6 +447,14 @@ app.whenReady().then(() => {
   });
 
   mainWin.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  setInterval(() => {
+    if (!mainWin || mainWin.isDestroyed()) return;
+    const capture = {}, playback = {};
+    for (const [ch, p] of capturePeaks) { capture[ch] = p; capturePeaks.set(ch, p * LEVEL_DECAY); }
+    for (const [ch, p] of playbackPeaks) { playback[ch] = p; playbackPeaks.set(ch, p * LEVEL_DECAY); }
+    mainWin.webContents.send('audio-levels', { capture, playback });
+  }, 33);
 
   // Open all target="_blank" links (director pages, join links) in the system browser
   mainWin.webContents.setWindowOpenHandler(({ url }) => {
@@ -567,6 +582,7 @@ app.whenReady().then(() => {
         if (a > peak) peak = a;
       }
       if (peak < 0.002) return;
+      playbackPeaks.set(outCh, Math.max(playbackPeaks.get(outCh) || 0, peak));
       coreAudio.pushPlaybackSamples(outCh, floats, gain ?? 1.0);
       playbackFrameCount++;
       if (playbackFrameCount === 1 || playbackFrameCount % 500 === 0) {

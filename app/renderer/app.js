@@ -272,7 +272,11 @@ function renderLines() {
       <h2><span class="editable-name" data-line="${line.id}" contenteditable="true" spellcheck="false">${line.name}</span></h2>
       <div class="group-badge">Group: <span class="group-name" id="group-${line.id}">${getLineGroup(line)}</span></div>
       <div class="location-row"><span class="editable-location" data-line="${line.id}" contenteditable="true" spellcheck="false" data-placeholder="Location…">${line.location || ''}</span></div>
-      <div class="meter"><div class="meter-bar" id="meter-${line.id}"></div></div>
+      <div class="meter-stack">
+        <div class="meter"><div class="meter-bar" id="meter-in-${line.id}"></div></div>
+        <div class="meter"><div class="meter-bar meter-bar-out" id="meter-out-${line.id}"></div></div>
+        <div class="meter-labels"><span>mic</span><span>remote</span></div>
+      </div>
       <div class="channel-row">
         <label>In</label>
         <select id="ch-in-${line.id}" data-line="${line.id}" data-dir="in" title="Hardware input 1–${outputChannelCount}">
@@ -708,5 +712,15 @@ function setupSettings() {
     renderCommsBar();
   });
 }
+
+window.api.onAudioLevels(({ capture, playback }) => {
+  if (!config) return;
+  config.lines.forEach((line) => {
+    const inBar  = document.getElementById(`meter-in-${line.id}`);
+    const outBar = document.getElementById(`meter-out-${line.id}`);
+    if (inBar)  inBar.style.width  = `${Math.min(100, (capture[line.input_channel]  || 0) * 200)}%`;
+    if (outBar) outBar.style.width = `${Math.min(100, (playback[line.output_channel] || 0) * 200)}%`;
+  });
+});
 
 init();

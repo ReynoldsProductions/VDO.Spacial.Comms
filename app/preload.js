@@ -15,4 +15,5 @@ contextBridge.exposeInMainWorld('api', {
   connectLine: (id, url, inputChannel, outputChannel, gainOut, group) =>
     ipcRenderer.invoke('connect-line', { id, url, inputChannel, outputChannel, gainOut, group }),
   disconnectLine: (id) => ipcRenderer.invoke('disconnect-line', id),
+  onAudioLevels: (cb) => ipcRenderer.on('audio-levels', (_e, data) => cb(data)),
 });
