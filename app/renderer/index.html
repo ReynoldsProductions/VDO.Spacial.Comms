@@ -85,7 +85,7 @@
     /* Settings overlay */
     #settings-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 100; }
     #settings-overlay.open { display: flex; }
-    .settings-box { background: #242424; border: 1px solid #333; border-radius: 10px; padding: 24px; width: 420px; display: flex; flex-direction: column; gap: 16px; }
+    .settings-box { background: #242424; border: 1px solid #333; border-radius: 10px; padding: 24px; width: 460px; max-height: calc(100vh - 80px); overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
     .settings-box h2 { font-size: 15px; font-weight: 600; }
     .settings-row { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
     .settings-row label { color: #aaa; }
