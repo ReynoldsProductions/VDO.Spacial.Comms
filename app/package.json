@@ -2,6 +2,11 @@
   "name": "vdo-spacial-comms",
   "version": "0.1.0",
   "description": "Spatial binaural intercom via VDO.ninja — per-line HRTF positioning, push-to-talk, Control API",
+  "author": {
+    "name": "Reynolds Productions",
+    "email": "thomasreynolds75@gmail.com"
+  },
+  "homepage": "https://github.com/ReynoldsProductions/VDO.Spacial.Comms",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -29,7 +34,7 @@
       "icon": "assets/icon.icns",
       "category": "public.app-category.utilities",
       "target": [
-        { "target": "dmg", "arch": ["arm64"] }
+        { "target": "dmg", "arch": ["arm64", "x64"] }
       ]
     },
     "linux": {
