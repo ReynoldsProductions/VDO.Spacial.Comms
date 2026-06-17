@@ -1,128 +1,108 @@
 # VDO.Spacial.Comms
 
-> **Early development.** Forked from [VDO.MultiCh.Comms](https://github.com/TomsFaire/VDO.MultiCh.Comms).
+> **Active development — pre-alpha.** Forked from [VDO.MultiCh.Comms](https://github.com/TomsFaire/VDO.MultiCh.Comms).
 
-Spatial binaural intercom built on [VDO.ninja](https://vdo.ninja). Each party line is positioned in a virtual space — drag it left, right, front, back — and the mix renders binaurally through headphones via Web Audio HRTF. Push-to-talk on one or more lines from a Stream Deck, tablet, or phone.
+Spatial binaural intercom for live production. Each party line sits at a position in virtual space — drag it left, right, front, back — and the mix renders through headphones via Web Audio HRTF. Push-to-talk on one or more lines from a Stream Deck, tablet, or phone. Runs headless on a dedicated box; the operator UI is a web page served by the app and reachable from any browser on the network.
 
-Designed to run headless on a dedicated box (NUC, Mac mini, or Pi 5). The operator UI is a web app served by the app itself — open it on any browser on the network, no monitor on the audio host required.
-
-**Interoperates** with VDO.MultiCh.Comms: both apps share the same VDO.ninja room and party lines. A classic hardware-routed operator and a spatial operator can be on the same lines simultaneously.
+Built on [VDO.ninja](https://vdo.ninja) for transport. No proprietary server, no accounts, no app install for remote participants.
 
 ---
 
-## Status
+## Where we are
 
-| Track | Status |
-|---|---|
-| Binaural PoC (static PannerNodes, HRTF verify) | 🔧 In progress |
-| Render Layer (live VDO lines → PannerNodes) | ⏳ Planned — Phase 1 |
-| Web UI (radar view, settings, presets) | ⏳ Planned — Phase 2 |
-| Talk-back core (per-channel inputSource, PTT) | ⏳ Planned — Phase 3 |
-| Control API (HTTP/WebSocket, serves web UI) | ⏳ Planned — Phase 3 |
-| Companion module | ⏳ Planned — Phase 4 |
-| CLI installer (headless setup, systemd) | ⏳ Planned — Phase 5 |
-| Presets and polish | ⏳ Planned — Phase 5 |
-| Direct channels (1:1 private lines) | ⏳ Post-v1 |
-| Mobile beltpack web client | ⏳ Post-v1 |
-| Discrete multichannel HDMI/MADI backend | ⏳ Post-v1 |
+The fork is set up and the foundation is laid. Currently verifying the binaural PoC on Mac and NUC before starting Phase 1.
 
-Full architecture and phased plan: [docs/spatial-architecture.md](docs/spatial-architecture.md)
+| Component | Status | Notes |
+|---|---|---|
+| Fork, branch, package rename | ✅ Done | `ReynoldsProductions/VDO.Spacial.Comms`, branch `spatial-intercom` |
+| Channel data model | ✅ Done | `app/spatial/channelModel.js` — sync point for all parallel tracks |
+| Linux build targets | ✅ Done | AppImage + deb, arm64 + x64 |
+| CoreAudio optional | ✅ Done | App starts on Linux with no native addon |
+| Binaural PoC | 🔧 Verifying | `test/binaural-poc.html` — open in Chrome with headphones |
+| **Phase 1 — Render Layer** | ⏳ Next | Wire live VDO lines into PannerNodes |
+| **Phase 2 — Web UI** | ⏳ Planned | Radar view, settings, presets — served by Control API |
+| **Phase 3 — Talk-back + Control API** | ⏳ Planned | PTT/latch, transmittingChannels, HTTP/WebSocket server |
+| **Phase 4 — Companion module** | ⏳ Planned | Talk/Listen/Pan/Preset actions + feedbacks |
+| **Phase 5 — CLI installer + presets** | ⏳ Planned | Headless setup, systemd, access URL echo |
+| Direct channels (1:1 private lines) | ⏳ Post-v1 | |
+| Mobile beltpack web client | ⏳ Post-v1 | |
+| HDMI/MADI multichannel backend | ⏳ Post-v1 | |
 
----
+**Gate to Phase 1:** binaural PoC confirmed audible on both Mac and NUC (left/right clearly distinguishable with headphones).
 
-## How it relates to VDO.MultiCh.Comms
-
-VDO.MultiCh.Comms routes each party line to a dedicated hardware output channel via a CoreAudio N-API addon. This fork replaces that output model with a spatial binaural mix — all lines go through Web Audio `PannerNode`s into one stereo headphone output. These are two separate products for different use cases; there is no mode toggle.
-
-The VDO ingestion layer (per-line `WebContentsView` + preload + IPC audio bridge) is inherited unchanged. Session export codes (`comms_room` + group names) are compatible between both apps — share a session code and both clients join the same party lines.
+Full architecture, parallel tracks, and model assignments: [docs/spatial-architecture.md](docs/spatial-architecture.md)
 
 ---
 
-## Architecture
+## How it works
 
 ```
 VDO.ninja (WebRTC, per-line group)
-  → WebContentsView + preload (IPC audio-frame, inherited from VDO.MultiCh.Comms)
+  → WebContentsView + preload  ← inherited from VDO.MultiCh.Comms, unchanged
   → Spatial Mixer (hidden renderer, Web Audio)
-      PannerNode[line0] ──┐
-      PannerNode[line1] ──┼── AudioContext.destination → headphones
-      PannerNode[lineN] ──┘
+      PannerNode[PL1] ──┐
+      PannerNode[PL2] ──┼── AudioContext.destination → headphones
+      PannerNode[PLn] ──┘
 
-Operator mic (getUserMedia — no native addon needed for v1)
-  → transmittingChannels gate (PTT / latch)
-  → VDO.ninja push (per active line's group)
+Operator mic (getUserMedia — no native addon for v1)
+  → transmittingChannels gate
+  → VDO.ninja push per active line
 
-Control API + Web UI (one HTTP/WebSocket server, one port)
-  ← Browser on any device (radar view, settings, presets)
+Control API + Web UI  (one HTTP/WebSocket server, one port)
+  ← any browser: radar view, settings, presets
   ← Bitfocus Companion module
-  ← Electron window (same web page, if a monitor is attached)
+  ← Electron's own window (same page, when a monitor is present)
 ```
 
-**The UI is a web app, not an Electron-native window.** Radar positioning, settings, presets, and Direct channel management are served by the Control API as a single web page — reachable from any browser on the network. Electron's own window just loads that same page when a local monitor is present. The audio host can run fully headless.
+The UI is a web app served by the Control API, not an Electron-native window. This means the audio host can run headless — no monitor, no GUI. Opening `http://<host>:<port>` from any device on the network gives you the full operator interface.
 
-Full detail: [docs/spatial-architecture.md](docs/spatial-architecture.md)
+---
+
+## Interoperability with VDO.MultiCh.Comms
+
+These are two separate products. VDO.MultiCh.Comms routes each party line to a dedicated hardware output channel (CoreAudio, macOS). This app replaces that output model with a shared binaural mix — no mode toggle, no shared codebase going forward.
+
+What they share: the VDO.ninja room and group names. A VDO.MultiCh.Comms operator and a VDO.Spacial.Comms operator can be on the same party lines simultaneously — each hears and talks the same lines, each app routes the audio differently on its own side. Session export codes are compatible: import a session from either app and you're in the same room.
+
+VDO.MultiCh.Comms has a [planned Direct Channels addition](https://github.com/TomsFaire/VDO.MultiCh.Comms/pull/10) so classic-app operators can eventually participate in Direct channels initiated from this app.
 
 ---
 
 ## Target hardware
 
-**Dev/PoC host:** 6th-gen i3 NUC (8GB RAM, 256GB SSD). Handles the v1 workload (Opus decode + HRTF convolution for 10–12 sources) with zero porting work — v1 needs no native addon at all.
+**Current dev/PoC host:** 6th-gen i3 NUC (8GB RAM, 256GB SSD). Comfortably handles the v1 workload — audio-only Opus decode is cheap, and HRTF convolution for 10–12 sources is modest DSP. Zero porting work needed since v1 uses no native addon.
 
-**Production options:** any x86 N100/N150 mini PC (Beelink, GMKtec, etc.) or Mac mini. Pi 5 is the realistic floor in the Pi family but currently cost-competitive with x86 mini PCs that offer more headroom and simpler HDMI audio paths.
+**Production:** any x86 N100/N150 mini PC (Beelink, GMKtec, Minisforum, etc.) or Mac mini. Better CPU headroom and simpler HDMI audio paths than Pi for this workload.
 
-Pi 4 is **not recommended** — too underpowered for simultaneous WebRTC decode + HRTF convolution at the 10–12 participant target.
+**Pi 5:** viable floor within the Pi family, but current pricing (~$135–195 fully kitted) makes it cost-competitive with N100 mini PCs that offer more headroom. Pi 4 is not recommended — underpowered for simultaneous WebRTC decode + HRTF at the 10–12 participant target.
 
 ---
 
-## For developers
+## Development
 
 ### Prerequisites
 
 - Node.js 18+
-- macOS (Apple Silicon) or any Debian-based x86/arm64 Linux — both supported
-- CoreAudio native addon is **not required for v1** — used only for `dedicated`-type input channels (macOS) and the future HDMI backend
-- Linux headless: Xvfb or `--enable-offscreen-rendering` flags needed for Chromium with no display attached (exact flags TBD once tested on target hardware)
+- macOS or Debian-based Linux (x86 or arm64)
+- No native addon required for v1
+- Linux headless: needs Xvfb or `--enable-offscreen-rendering` for Chromium with no display (exact invocation TBD on target hardware)
 
-### Dev run
+### Run
 
 ```bash
-cd app
-npm install
-npm start
+cd app && npm install && npm start
 ```
 
-Config lives at `~/.vdo-multichan/config.json`.
+Config: `~/.vdo-multichan/config.json` — same format as VDO.MultiCh.Comms, spatial fields optional and default gracefully.
 
-### Binaural PoC (no Electron needed)
+### Verify the binaural PoC first
 
-Open `test/binaural-poc.html` in any browser with headphones. Six static PannerNodes at fixed azimuths — confirms HRTF placement is audible on this platform before wiring into Electron.
+Before building Phase 1, open `test/binaural-poc.html` in Chrome with headphones (no Electron needed). Six static PannerNodes at fixed azimuths. Hard left (−90°) and hard right (+90°) should be unambiguous. Front/behind may be subtle — that's expected with generic HRTF and not a failure condition.
 
-### Config
-
-`~/.vdo-multichan/config.json` — same base format as VDO.MultiCh.Comms, with additional optional spatial fields:
-
-```json
-{
-  "comms_room": "my-event",
-  "lines": [
-    {
-      "id": 0, "name": "PL1", "group": "pl1",
-      "azimuth": -45, "volume": 1.0, "listening": true,
-      "inputSource": "sharedMic"
-    }
-  ]
-}
-```
-
-New spatial fields default gracefully — a config saved by VDO.MultiCh.Comms loads without migration.
-
----
-
-### Documentation
+### Docs
 
 | Doc | Contents |
-|-----|----------|
-| [docs/spatial-architecture.md](docs/spatial-architecture.md) | Full design: architecture, phases, data model, platform notes |
-| [docs/usage.md](docs/usage.md) | End-user guide (inherited, will be updated) |
-| [docs/development.md](docs/development.md) | Build from source, CI |
-| [docs/self-hosting.md](docs/self-hosting.md) | VDO.ninja self-hosting, TURN |
+|---|---|
+| [docs/spatial-architecture.md](docs/spatial-architecture.md) | Full design, phased build plan, parallel tracks, model assignments |
+| [docs/development.md](docs/development.md) | Build from source, CI, release tagging |
+| [docs/self-hosting.md](docs/self-hosting.md) | VDO.ninja self-hosting, TURN server setup |
