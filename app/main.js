@@ -3,10 +3,18 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-const nativeAddonPath = app.isPackaged
-  ? path.join(process.resourcesPath, 'coreaudio.node')
-  : path.join(__dirname, 'native/build/Release/coreaudio.node');
-const coreAudio = require(nativeAddonPath);
+// CoreAudio addon is macOS-only and not used for v1 spatial binaural output
+// (which routes through Web Audio AudioContext.destination instead).
+// Optional require so the app starts on Linux/Pi without a native build.
+let coreAudio = null;
+try {
+  const nativeAddonPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'coreaudio.node')
+    : path.join(__dirname, 'native/build/Release/coreaudio.node');
+  coreAudio = require(nativeAddonPath);
+} catch (_) {
+  console.log('[audio] CoreAudio addon unavailable — running in Web Audio only mode');
+}
 
 const CONFIG_PATH = path.join(os.homedir(), '.vdo-multichan', 'config.json');
 

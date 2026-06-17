@@ -1,7 +1,7 @@
 {
-  "name": "vdo-multichan-comms",
-  "version": "0.1.4",
-  "description": "Multi-channel IP intercom via VDO.ninja + CPAL audio shim",
+  "name": "vdo-spacial-comms",
+  "version": "0.1.0",
+  "description": "Spatial binaural intercom via VDO.ninja — per-line HRTF positioning, push-to-talk, Control API",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -16,20 +16,14 @@
     "qrcode": "^1.5.4"
   },
   "build": {
-    "appId": "com.vdo.multichan.comms",
-    "productName": "VDO.MultiCh.Comms",
+    "appId": "com.vdo.spacial.comms",
+    "productName": "VDO.Spacial.Comms",
     "files": [
       "**/*",
       "!node_modules/.cache",
       "!scripts",
       "!assets/icon-source.png",
       "!assets/*.iconset"
-    ],
-    "extraResources": [
-      {
-        "from": "native/build/Release/coreaudio.node",
-        "to": "coreaudio.node"
-      }
     ],
     "mac": {
       "icon": "assets/icon.icns",
@@ -38,8 +32,15 @@
         { "target": "dmg", "arch": ["arm64"] }
       ]
     },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["arm64", "x64"] },
+        { "target": "deb", "arch": ["arm64", "x64"] }
+      ],
+      "category": "AudioVideo"
+    },
     "dmg": {
-      "title": "VDO.MultiCh.Comms ${version}"
+      "title": "VDO.Spacial.Comms ${version}"
     }
   }
 }
