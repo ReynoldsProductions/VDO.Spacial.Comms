@@ -18,8 +18,8 @@ The fork is set up and the foundation is laid. Currently verifying the binaural 
 | Channel data model | ✅ Done | `app/spatial/channelModel.js` — sync point for all parallel tracks |
 | Linux build targets | ✅ Done | AppImage + deb, arm64 + x64 |
 | CoreAudio optional | ✅ Done | App starts on Linux with no native addon |
-| Binaural PoC | 🔧 Verifying | `test/binaural-poc.html` — open in Chrome with headphones |
-| **Phase 1 — Render Layer** | ⏳ Next | Wire live VDO lines into PannerNodes |
+| Binaural PoC | ✅ Done | Confirmed on Mac — left/right clearly distinguishable |
+| **Phase 1 — Render Layer** | 🔧 Next | Wire live VDO lines into PannerNodes |
 | **Phase 2 — Web UI** | ⏳ Planned | Radar view, settings, presets — served by Control API |
 | **Phase 3 — Talk-back + Control API** | ⏳ Planned | PTT/latch, transmittingChannels, HTTP/WebSocket server |
 | **Phase 4 — Companion module** | ⏳ Planned | Talk/Listen/Pan/Preset actions + feedbacks |
@@ -28,7 +28,7 @@ The fork is set up and the foundation is laid. Currently verifying the binaural 
 | Mobile beltpack web client | ⏳ Post-v1 | |
 | HDMI/MADI multichannel backend | ⏳ Post-v1 | |
 
-**Gate to Phase 1:** binaural PoC confirmed audible on both Mac and NUC (left/right clearly distinguishable with headphones).
+**Gate to Phase 1:** ✅ Passed — binaural PoC confirmed on Mac, left/right clearly distinguishable.
 
 Full architecture, parallel tracks, and model assignments: [docs/spatial-architecture.md](docs/spatial-architecture.md)
 

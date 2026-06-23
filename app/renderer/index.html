@@ -281,6 +281,13 @@
         </div>
         <div class="test-status" id="test-status"></div>
       </div>
+      <div class="settings-row">
+        <label>Output mode</label>
+        <select id="output-mode-select">
+          <option value="classic">Classic (dedicated hardware per line)</option>
+          <option value="spatial">Spatial (binaural render)</option>
+        </select>
+      </div>
       <hr class="settings-divider" />
       <div class="settings-section-heading">Session</div>
       <div class="settings-row">
@@ -306,6 +313,7 @@
     <span id="build-label">v0.0.1 build 1</span>
   </footer>
 
+  <script src="../spatial/spatialMixer.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

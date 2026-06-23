@@ -500,9 +500,25 @@ async function toggleConnect(id) {
       line.gain_out,
       getLineGroup(line)
     );
+    if (config.outputMode === 'spatial') {
+      const channelState = config.spatial?.channels?.[id] ?? {};
+      window.api.sendSpatialUpdate(id, {
+        azimuth: channelState.azimuth ?? 0,
+        volume: channelState.volume ?? 1,
+        listening: channelState.listening !== false,
+      });
+    }
   } else {
     await window.api.disconnectLine(id);
   }
+}
+
+function updateSpatialChannel(id, update) {
+  if (config.outputMode !== 'spatial') return;
+  if (!config.spatial) config.spatial = { channels: {} };
+  if (!config.spatial.channels) config.spatial.channels = {};
+  Object.assign(config.spatial.channels[id] = config.spatial.channels[id] ?? {}, update);
+  window.api.sendSpatialUpdate(id, update);
 }
 
 async function copyQrImage() {
@@ -729,6 +745,7 @@ function setupSettings() {
     document.getElementById('output-ch-override').value = config.output_channels_override || '';
     document.getElementById('comms-room-input').value = config.comms_room || '';
     document.getElementById('comms-password').value = config.comms_password || '';
+    document.getElementById('output-mode-select').value = config.outputMode || 'classic';
     // Pre-populate export code
     document.getElementById('session-export-code').value = exportSession();
     document.getElementById('session-export-msg').textContent = '';
@@ -809,6 +826,7 @@ function setupSettings() {
       config.lock_password = '';
     }
     config.comms_password = document.getElementById('comms-password').value.trim();
+    config.outputMode = document.getElementById('output-mode-select').value || 'classic';
     // Apply channel count overrides (or detected values from shim)
     const inOverride = parseInt(document.getElementById('input-ch-override').value) || 0;
     const outOverride = parseInt(document.getElementById('output-ch-override').value) || 0;
