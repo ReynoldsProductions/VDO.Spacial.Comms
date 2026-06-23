@@ -850,6 +850,10 @@ app.whenReady().then(() => {
     }
   });
 
+  ipcMain.handle('open-spatial-ui', () => {
+    shell.openExternal(`http://localhost:${cfg.controlApiPort || 8080}`);
+  });
+
   ipcMain.on('spatial-update-line', (_e, lineId, update) => {
     const view = lineViews.get(lineId);
     if (!view || view.webContents.isDestroyed()) return;

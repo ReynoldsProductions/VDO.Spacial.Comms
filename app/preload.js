@@ -18,4 +18,5 @@ contextBridge.exposeInMainWorld('api', {
   onAudioLevels: (cb) => ipcRenderer.on('audio-levels', (_e, data) => cb(data)),
   sendSpatialUpdate: (lineId, update) => ipcRenderer.send('spatial-update-line', lineId, update),
   onSpatialChannelUpdate: (cb) => ipcRenderer.on('spatial-channel-update', (_e, id, update) => cb(id, update)),
+  openSpatialUI: () => ipcRenderer.invoke('open-spatial-ui'),
 });

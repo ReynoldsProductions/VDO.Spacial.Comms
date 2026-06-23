@@ -1,6 +1,7 @@
 let config = null;
 let inputChannelCount = 2;
 let outputChannelCount = 2;
+const spatialChannels = {}; // { [id]: { azimuth, listening } }
 
 async function renderQr(id, url) {
   const img = document.getElementById(`qr-${id}`);
@@ -153,6 +154,7 @@ async function init() {
   if (config.input_device_uid || config.input_device) {
     await startCaptureForConfig();
   }
+  updateModeIndicator();
 }
 
 function channelOptions(selected, count = 16) {
@@ -383,9 +385,48 @@ function renderLines() {
         <span id="gain-out-val-${line.id}">${line.gain_out.toFixed(2)}</span>
       </div>
       <button class="connect-btn" id="connect-${line.id}" onclick="toggleConnect(${line.id})">Connect</button>
+      <div class="pan-section" id="pan-section-${line.id}">
+        <div class="pan-strip-wrap">
+          <div class="pan-strip" id="pan-strip-${line.id}">
+            <div class="pan-strip-center"></div>
+            <div class="pan-thumb" id="pan-thumb-${line.id}" style="left:50%"></div>
+          </div>
+        </div>
+        <span class="pan-readout" id="pan-readout-${line.id}">0° (Front)</span>
+        <button class="pan-listen-btn" id="pan-listen-${line.id}" onclick="toggleSpatialListen(${line.id})">Listen</button>
+      </div>
     `;
 
     container.appendChild(panel);
+
+    spatialChannels[line.id] = spatialChannels[line.id] || { azimuth: 0, listening: true };
+    syncPanUI(line.id, spatialChannels[line.id]);
+
+    const strip = document.getElementById(`pan-strip-${line.id}`);
+    if (strip) {
+      let dragging = false;
+      const getAz = (e) => {
+        const rect = strip.getBoundingClientRect();
+        return Math.max(-180, Math.min(180, ((e.clientX - rect.left) / rect.width - 0.5) * 360));
+      };
+      strip.addEventListener('mousedown', (e) => {
+        dragging = true;
+        e.preventDefault();
+        updateSpatialChannel(line.id, { azimuth: getAz(e) });
+      });
+      document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        updateSpatialChannel(line.id, { azimuth: getAz(e) });
+      });
+      document.addEventListener('mouseup', (e) => {
+        if (!dragging) return;
+        dragging = false;
+        updateSpatialChannel(line.id, { azimuth: Math.round(getAz(e) * 10) / 10 });
+      });
+      strip.addEventListener('dblclick', () => {
+        updateSpatialChannel(line.id, { azimuth: 0 });
+      });
+    }
 
     // Populate device dropdowns for this line
     populateLineDeviceDropdown(
@@ -513,12 +554,57 @@ async function toggleConnect(id) {
   }
 }
 
+function azimuthLabel(az) {
+  if (az === 0) return '0° (Front)';
+  return az < 0 ? `L ${Math.abs(az).toFixed(1)}°` : `R ${az.toFixed(1)}°`;
+}
+
+function syncPanUI(id, channelState) {
+  const thumb = document.getElementById(`pan-thumb-${id}`);
+  const readout = document.getElementById(`pan-readout-${id}`);
+  const listenBtn = document.getElementById(`pan-listen-${id}`);
+  if (!thumb || !readout) return;
+  const az = channelState.azimuth ?? 0;
+  thumb.style.left = `${((az / 360) + 0.5) * 100}%`;
+  readout.textContent = azimuthLabel(az);
+  if (listenBtn) {
+    const listening = channelState.listening !== false;
+    listenBtn.textContent = listening ? 'Listen' : 'Muted';
+    listenBtn.classList.toggle('muted', !listening);
+  }
+}
+
 function updateSpatialChannel(id, update) {
   if (config.outputMode !== 'spatial') return;
   if (!config.spatial) config.spatial = { channels: {} };
   if (!config.spatial.channels) config.spatial.channels = {};
   Object.assign(config.spatial.channels[id] = config.spatial.channels[id] ?? {}, update);
+  spatialChannels[id] = Object.assign(spatialChannels[id] || { azimuth: 0, listening: true }, update);
+  syncPanUI(id, spatialChannels[id]);
   window.api.sendSpatialUpdate(id, update);
+}
+
+function toggleSpatialListen(id) {
+  const ch = spatialChannels[id] || { azimuth: 0, listening: true };
+  updateSpatialChannel(id, { listening: !ch.listening });
+}
+
+function updateModeIndicator() {
+  const isSpatial = config?.outputMode === 'spatial';
+  const pill = document.getElementById('mode-pill');
+  const spatialBtn = document.getElementById('spatial-ui-btn');
+  if (pill) {
+    pill.textContent = isSpatial ? 'Spatial' : 'Classic';
+    pill.className = `mode-pill ${isSpatial ? 'spatial' : 'classic'}`;
+  }
+  if (spatialBtn) spatialBtn.style.display = isSpatial ? '' : 'none';
+  document.querySelectorAll('.pan-section').forEach(el => {
+    el.classList.toggle('spatial-visible', isSpatial);
+  });
+}
+
+function openSpatialUI() {
+  window.api.openSpatialUI();
 }
 
 async function copyQrImage() {
@@ -837,6 +923,7 @@ function setupSettings() {
     outputChannelCount = outOverride || detected.outCount;
     updateChannelDropdowns();
     await window.api.saveConfig(config);
+    updateModeIndicator();
     if (config.input_device_uid) {
       await startCaptureForConfig();
     } else {
