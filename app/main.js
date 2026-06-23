@@ -3,15 +3,27 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-const nativeAddonPath = app.isPackaged
-  ? path.join(process.resourcesPath, 'coreaudio.node')
-  : path.join(__dirname, 'native/build/Release/coreaudio.node');
-const coreAudio = require(nativeAddonPath);
+// CoreAudio addon is macOS-only and not used for v1 spatial binaural output
+// (which routes through Web Audio AudioContext.destination instead).
+// Optional require so the app starts on Linux/Pi without a native build.
+let coreAudio = null;
+try {
+  const nativeAddonPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'coreaudio.node')
+    : path.join(__dirname, 'native/build/Release/coreaudio.node');
+  coreAudio = require(nativeAddonPath);
+} catch (_) {
+  console.log('[audio] CoreAudio addon unavailable — running in Web Audio only mode');
+}
 
 const CONFIG_PATH = path.join(os.homedir(), '.vdo-multichan', 'config.json');
 
-function buildLineShim(inputChannel, outputChannel, gainOut, groupName, stripIceServers) {
+function buildLineShim(inputChannel, outputChannel, gainOut, groupName, stripIceServers, outputMode, spatialMixerPath, channelState) {
   const groupLiteral = JSON.stringify(String(groupName || ''));
+  const mixerPathLiteral = JSON.stringify(spatialMixerPath || '');
+  const azimuth = channelState?.azimuth ?? 0;
+  const volume = channelState?.volume ?? 1;
+  const listening = channelState?.listening !== false;
   return `
 (function() {
   const INPUT_CH = ${inputChannel};
@@ -20,6 +32,11 @@ function buildLineShim(inputChannel, outputChannel, gainOut, groupName, stripIce
   const GROUP = ${groupLiteral};
   const STRIP_ICE = ${stripIceServers ? 'true' : 'false'};
   const SAMPLE_RATE = 48000;
+  const OUTPUT_MODE = ${JSON.stringify(outputMode || 'classic')};
+  const SPATIAL_MIXER_PATH = ${mixerPathLiteral};
+  const INITIAL_AZIMUTH = ${azimuth};
+  const INITIAL_VOLUME = ${volume};
+  const INITIAL_LISTENING = ${listening};
 
   let _resolveStream;
   const _streamPromise = new Promise(r => { _resolveStream = r; });
@@ -116,6 +133,84 @@ function buildLineShim(inputChannel, outputChannel, gainOut, groupName, stripIce
   (async function initRemoteTap() {
     try {
       const { ipcRenderer } = require('electron');
+
+      if (OUTPUT_MODE === 'spatial') {
+        const mixer = require(SPATIAL_MIXER_PATH);
+        const CHANNEL_ID = OUTPUT_CH;
+
+        let activeTrack = null;
+        const seenElements = new WeakSet();
+
+        ipcRenderer.on('spatial-update', (_e, update) => {
+          if (update.azimuth !== undefined) mixer.updatePosition(CHANNEL_ID, update.azimuth);
+          if (update.volume !== undefined) mixer.updateVolume(CHANNEL_ID, update.volume);
+          if (update.listening !== undefined) mixer.setListening(CHANNEL_ID, update.listening);
+        });
+
+        function tapTrack(track) {
+          if (!track || track.kind !== 'audio' || track.readyState === 'ended') return;
+          if (activeTrack === track) return;
+          if (activeTrack) mixer.disconnect(CHANNEL_ID);
+          activeTrack = track;
+          const stream = new MediaStream([track]);
+          mixer.connect(CHANNEL_ID, stream, { azimuth: INITIAL_AZIMUTH, volume: INITIAL_VOLUME, listening: INITIAL_LISTENING });
+          track.addEventListener('ended', () => {
+            if (activeTrack === track) { mixer.disconnect(CHANNEL_ID); activeTrack = null; }
+          });
+          console.log('[spatial-tap] attached track', track.id || track.label, '→ ch', CHANNEL_ID, 'group', GROUP);
+        }
+
+        function tapStreamFromDom(stream) {
+          if (!stream || !stream.getAudioTracks) return;
+          for (const t of stream.getAudioTracks()) {
+            if (t.kind === 'audio' && t.readyState === 'live') { tapTrack(t); return; }
+          }
+        }
+
+        function isLocalPreview(el) {
+          if (!el) return true;
+          const hint = ((el.id || '') + ' ' + (el.className || '') + ' ' + (el.getAttribute('data-label') || '')).toLowerCase();
+          if (/local|self|preview|mirror|director|own|publish/.test(hint)) return true;
+          if (el.dataset && el.dataset.local === 'true') return true;
+          return false;
+        }
+
+        function maybeTapElement(el) {
+          if (!el || !el.srcObject || isLocalPreview(el)) return;
+          if (activeTrack && activeTrack.readyState === 'live') return;
+          if (el.paused && el.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+          tapStreamFromDom(el.srcObject);
+        }
+
+        function silenceElement(el) { if (!el) return; el.muted = true; el.volume = 0; }
+
+        function watchElement(el) {
+          if (!el || seenElements.has(el)) return;
+          seenElements.add(el);
+          silenceElement(el);
+          el.addEventListener('playing', () => { silenceElement(el); maybeTapElement(el); });
+          if (el.srcObject) maybeTapElement(el);
+        }
+
+        new MutationObserver((muts) => {
+          for (const m of muts) {
+            for (const node of m.addedNodes) {
+              if (node.nodeType !== 1) continue;
+              if (node.matches && node.matches('video,audio')) watchElement(node);
+              if (node.querySelectorAll) node.querySelectorAll('video,audio').forEach(watchElement);
+            }
+          }
+        }).observe(document.documentElement, { childList: true, subtree: true });
+
+        document.querySelectorAll('video,audio').forEach(watchElement);
+        setInterval(() => {
+          document.querySelectorAll('video,audio').forEach(silenceElement);
+          if (activeTrack && activeTrack.readyState === 'live') return;
+          document.querySelectorAll('video,audio').forEach(maybeTapElement);
+        }, 3000);
+        return;
+      }
+
       const tapCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
       await tapCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([\`
         class RemoteCapture extends AudioWorkletProcessor {
@@ -290,11 +385,13 @@ const DEFAULT_CONFIG = {
   input_device_uid: '',
   output_device_uid: '',
   sample_rate: 48000,
+  outputMode: 'classic',
   webrtc_turn_off: false,
   webrtc_stun_only: false,
   webrtc_lan_mode: false,
   room_locked: false,
   lock_password: '',
+  controlApiPort: 8080,
   lines: [
     { id: 0, name: 'PL1', group: '1', input_channel: 0, output_channel: 0, gain_in: 1.0, gain_out: 1.0, input_device_uid: null, output_device_uid: null },
     { id: 1, name: 'PL2', group: '2', input_channel: 1, output_channel: 1, gain_in: 1.0, gain_out: 1.0, input_device_uid: null, output_device_uid: null },
@@ -321,11 +418,13 @@ function migrateConfig(cfg) {
     }
   }
   if (cfg.comms_password == null) cfg.comms_password = '';
+  if (cfg.outputMode == null) cfg.outputMode = 'classic';
   if (cfg.webrtc_turn_off == null)  cfg.webrtc_turn_off = false;
   if (cfg.webrtc_stun_only == null) cfg.webrtc_stun_only = false;
   if (cfg.webrtc_lan_mode == null)  cfg.webrtc_lan_mode = false;
   if (cfg.room_locked == null)      cfg.room_locked = false;
   if (cfg.lock_password == null)    cfg.lock_password = '';
+  if (cfg.controlApiPort == null)   cfg.controlApiPort = 8080;
   for (const line of cfg.lines || []) {
     if (!line.group) {
       if (line.room_key && cfg.comms_room && line.room_key.startsWith(cfg.comms_room)) {
@@ -490,6 +589,32 @@ app.whenReady().then(() => {
 
   mainWin.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
+  const controlApi = require('./spatial/controlApi');
+
+  function getSpatialState() {
+    return (cfg.lines || []).map((line) => {
+      const ch = cfg.spatial?.channels?.[line.id] || {};
+      return {
+        id: line.id,
+        label: line.name || `PL${line.id + 1}`,
+        azimuth: ch.azimuth ?? 0,
+        volume: ch.volume ?? 1,
+        listening: ch.listening ?? true,
+        active: false,
+      };
+    });
+  }
+
+  const api = controlApi.start(cfg, getSpatialState, (id, update) => {
+    if (!cfg.spatial) cfg.spatial = {};
+    if (!cfg.spatial.channels) cfg.spatial.channels = {};
+    if (!cfg.spatial.channels[id]) cfg.spatial.channels[id] = {};
+    Object.assign(cfg.spatial.channels[id], update);
+    if (mainWin && !mainWin.isDestroyed()) {
+      mainWin.webContents.send('spatial-channel-update', id, update);
+    }
+  });
+
   setInterval(() => {
     if (!mainWin || mainWin.isDestroyed()) return;
     const capture = {}, playback = {};
@@ -550,9 +675,11 @@ app.whenReady().then(() => {
 
     const tempDir = app.getPath('temp');
     const preloadPath = path.join(tempDir, `shim-line-${id}.js`);
+    const spatialMixerPath = path.join(__dirname, 'spatial', 'spatialMixer.js');
+    const channelState = cfg.spatial?.channels?.[id] ?? {};
     fs.writeFileSync(
       preloadPath,
-      buildLineShim(inputChannel ?? 0, outputChannel ?? 0, gainOut ?? 1.0, group ?? '', stripIce)
+      buildLineShim(inputChannel ?? 0, outputChannel ?? 0, gainOut ?? 1.0, group ?? '', stripIce, cfg.outputMode ?? 'classic', spatialMixerPath, channelState)
     );
 
     const view = createLineView(`persist:line-${id}`, preloadPath, url);
@@ -609,6 +736,7 @@ app.whenReady().then(() => {
       playbackSessionId,
     });
     console.log(`  url: ${url}`);
+    api.broadcastState(getSpatialState());
   });
 
   ipcMain.handle('disconnect-line', (_, id) => {
@@ -633,10 +761,12 @@ app.whenReady().then(() => {
     lineViews.delete(id);
     lineConfigs.delete(id);
     console.log(`Line ${id} disconnected`);
+    api.broadcastState(getSpatialState());
   });
 
-  // CoreAudio IPC handlers
-  ipcMain.handle('list-audio-devices', () => coreAudio.listDevices());
+  // CoreAudio IPC handlers — all guarded: coreAudio is null when the native addon
+  // isn't built (Linux, or Mac without a native build). Spatial mode doesn't need it.
+  ipcMain.handle('list-audio-devices', () => coreAudio ? coreAudio.listDevices() : []);
 
   ipcMain.handle('start-audio-capture', (_e, deviceUID, nChannels) => {
     try {
@@ -657,7 +787,7 @@ app.whenReady().then(() => {
 
   ipcMain.on('clear-playback', (_e, outCh) => {
     try {
-      coreAudio.clearPlaybackChannel(outCh ?? 0);
+      if (coreAudio) coreAudio.clearPlaybackChannel(outCh ?? 0);
     } catch (err) {
       console.error('clear-playback error:', err.message);
     }
@@ -691,13 +821,13 @@ app.whenReady().then(() => {
           const lc = lineConfigs.get(lineId);
           if (lc?.hasOwnSession) {
             const liveGain = outputGainByLineId.get(lineId) ?? 1.0;
-            coreAudio.pushPlaybackSamples(lc.playbackSessionId ?? `pl-${lineId}`, 0, floats, liveGain);
+            if (coreAudio) coreAudio.pushPlaybackSamples(lc.playbackSessionId ?? `pl-${lineId}`, 0, floats, liveGain);
             usedOwnSession = true;
           }
           break;
         }
       }
-      if (!usedOwnSession) {
+      if (!usedOwnSession && coreAudio) {
         const liveGain = (foundLineId != null ? outputGainByLineId.get(foundLineId) : null) ?? 1.0;
         coreAudio.pushPlaybackSamples('default', outCh, floats, liveGain);
       }
@@ -713,11 +843,21 @@ app.whenReady().then(() => {
 
   ipcMain.handle('play-test-tone', (_e, channel, ms) => {
     try {
-      coreAudio.playTestTone(channel ?? 0, ms ?? 500);
+      if (coreAudio) coreAudio.playTestTone(channel ?? 0, ms ?? 500);
       return { ok: true };
     } catch (e) {
       return { ok: false, error: e.message };
     }
+  });
+
+  ipcMain.handle('open-spatial-ui', () => {
+    shell.openExternal(`http://localhost:${cfg.controlApiPort || 8080}`);
+  });
+
+  ipcMain.on('spatial-update-line', (_e, lineId, update) => {
+    const view = lineViews.get(lineId);
+    if (!view || view.webContents.isDestroyed()) return;
+    view.webContents.send('spatial-update', update);
   });
 
   // IPC handlers
