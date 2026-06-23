@@ -764,8 +764,9 @@ app.whenReady().then(() => {
     api.broadcastState(getSpatialState());
   });
 
-  // CoreAudio IPC handlers
-  ipcMain.handle('list-audio-devices', () => coreAudio.listDevices());
+  // CoreAudio IPC handlers — all guarded: coreAudio is null when the native addon
+  // isn't built (Linux, or Mac without a native build). Spatial mode doesn't need it.
+  ipcMain.handle('list-audio-devices', () => coreAudio ? coreAudio.listDevices() : []);
 
   ipcMain.handle('start-audio-capture', (_e, deviceUID, nChannels) => {
     try {
@@ -786,7 +787,7 @@ app.whenReady().then(() => {
 
   ipcMain.on('clear-playback', (_e, outCh) => {
     try {
-      coreAudio.clearPlaybackChannel(outCh ?? 0);
+      if (coreAudio) coreAudio.clearPlaybackChannel(outCh ?? 0);
     } catch (err) {
       console.error('clear-playback error:', err.message);
     }
@@ -820,13 +821,13 @@ app.whenReady().then(() => {
           const lc = lineConfigs.get(lineId);
           if (lc?.hasOwnSession) {
             const liveGain = outputGainByLineId.get(lineId) ?? 1.0;
-            coreAudio.pushPlaybackSamples(lc.playbackSessionId ?? `pl-${lineId}`, 0, floats, liveGain);
+            if (coreAudio) coreAudio.pushPlaybackSamples(lc.playbackSessionId ?? `pl-${lineId}`, 0, floats, liveGain);
             usedOwnSession = true;
           }
           break;
         }
       }
-      if (!usedOwnSession) {
+      if (!usedOwnSession && coreAudio) {
         const liveGain = (foundLineId != null ? outputGainByLineId.get(foundLineId) : null) ?? 1.0;
         coreAudio.pushPlaybackSamples('default', outCh, floats, liveGain);
       }
@@ -842,7 +843,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('play-test-tone', (_e, channel, ms) => {
     try {
-      coreAudio.playTestTone(channel ?? 0, ms ?? 500);
+      if (coreAudio) coreAudio.playTestTone(channel ?? 0, ms ?? 500);
       return { ok: true };
     } catch (e) {
       return { ok: false, error: e.message };
