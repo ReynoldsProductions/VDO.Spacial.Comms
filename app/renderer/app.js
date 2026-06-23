@@ -386,14 +386,23 @@ function renderLines() {
       </div>
       <button class="connect-btn" id="connect-${line.id}" onclick="toggleConnect(${line.id})">Connect</button>
       <div class="pan-section" id="pan-section-${line.id}">
-        <div class="pan-strip-wrap">
-          <div class="pan-strip" id="pan-strip-${line.id}">
-            <div class="pan-strip-center"></div>
-            <div class="pan-thumb" id="pan-thumb-${line.id}" style="left:50%"></div>
-          </div>
+        <svg class="pan-radar" id="pan-radar-${line.id}" viewBox="0 0 80 80" width="80" height="80">
+          <circle cx="40" cy="40" r="36" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+          <circle cx="40" cy="40" r="24" fill="none" stroke="#2a2a2a" stroke-width="1"/>
+          <circle cx="40" cy="40" r="12" fill="none" stroke="#2a2a2a" stroke-width="1"/>
+          <line x1="40" y1="4" x2="40" y2="76" stroke="#2a2a2a" stroke-width="1"/>
+          <line x1="4" y1="40" x2="76" y2="40" stroke="#2a2a2a" stroke-width="1"/>
+          <text x="40" y="7" text-anchor="middle" fill="#444" font-size="5">F</text>
+          <text x="40" y="77" text-anchor="middle" fill="#444" font-size="5">B</text>
+          <text x="5" y="42" text-anchor="middle" fill="#444" font-size="5">L</text>
+          <text x="75" y="42" text-anchor="middle" fill="#444" font-size="5">R</text>
+          <circle cx="40" cy="40" r="2.5" fill="#666"/>
+          <circle id="pan-thumb-${line.id}" cx="40" cy="4" r="5" fill="#4a9eff" style="filter:drop-shadow(0 0 3px rgba(74,158,255,0.6));cursor:grab"/>
+        </svg>
+        <div class="pan-side">
+          <span class="pan-readout" id="pan-readout-${line.id}">0° (Front)</span>
+          <button class="pan-listen-btn" id="pan-listen-${line.id}" onclick="toggleSpatialListen(${line.id})">Listen</button>
         </div>
-        <span class="pan-readout" id="pan-readout-${line.id}">0° (Front)</span>
-        <button class="pan-listen-btn" id="pan-listen-${line.id}" onclick="toggleSpatialListen(${line.id})">Listen</button>
       </div>
     `;
 
@@ -402,14 +411,18 @@ function renderLines() {
     spatialChannels[line.id] = spatialChannels[line.id] || { azimuth: 0, listening: true };
     syncPanUI(line.id, spatialChannels[line.id]);
 
-    const strip = document.getElementById(`pan-strip-${line.id}`);
-    if (strip) {
+    const radar = document.getElementById(`pan-radar-${line.id}`);
+    if (radar) {
+      const CX = 40, CY = 40, R = 31;
       let dragging = false;
       const getAz = (e) => {
-        const rect = strip.getBoundingClientRect();
-        return Math.max(-180, Math.min(180, ((e.clientX - rect.left) / rect.width - 0.5) * 360));
+        const rect = radar.getBoundingClientRect();
+        const scale = 80 / rect.width;
+        const dx = (e.clientX - rect.left) * scale - CX;
+        const dy = (e.clientY - rect.top)  * scale - CY;
+        return Math.atan2(dx, -dy) * 180 / Math.PI;
       };
-      strip.addEventListener('mousedown', (e) => {
+      radar.addEventListener('mousedown', (e) => {
         dragging = true;
         e.preventDefault();
         updateSpatialChannel(line.id, { azimuth: getAz(e) });
@@ -423,7 +436,7 @@ function renderLines() {
         dragging = false;
         updateSpatialChannel(line.id, { azimuth: Math.round(getAz(e) * 10) / 10 });
       });
-      strip.addEventListener('dblclick', () => {
+      radar.addEventListener('dblclick', () => {
         updateSpatialChannel(line.id, { azimuth: 0 });
       });
     }
@@ -565,7 +578,10 @@ function syncPanUI(id, channelState) {
   const listenBtn = document.getElementById(`pan-listen-${id}`);
   if (!thumb || !readout) return;
   const az = channelState.azimuth ?? 0;
-  thumb.style.left = `${((az / 360) + 0.5) * 100}%`;
+  const rad = (az * Math.PI) / 180;
+  const R = 31, CX = 40, CY = 40;
+  thumb.setAttribute('cx', CX + Math.sin(rad) * R);
+  thumb.setAttribute('cy', CY - Math.cos(rad) * R);
   readout.textContent = azimuthLabel(az);
   if (listenBtn) {
     const listening = channelState.listening !== false;

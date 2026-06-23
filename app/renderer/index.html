@@ -84,13 +84,11 @@
     .mode-pill.classic { background: #2a2a2a; color: #666; border: 1px solid #3a3a3a; }
     .spatial-ui-btn { font-size: 12px; background: #1a3a5c; border: 1px solid #2a5a9a; color: #4a9eff; padding: 6px 12px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
     .spatial-ui-btn:hover { background: #204870; }
-    .pan-section { display: none; gap: 6px; align-items: center; padding-top: 6px; }
+    .pan-section { display: none; gap: 10px; align-items: center; padding-top: 8px; }
     .pan-section.spatial-visible { display: flex; }
-    .pan-strip-wrap { flex: 1; display: flex; flex-direction: column; gap: 3px; }
-    .pan-strip { position: relative; height: 28px; background: #2a2a2a; border: 1px solid #444; border-radius: 4px; cursor: ew-resize; user-select: none; }
-    .pan-strip-center { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: #555; }
-    .pan-thumb { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 14px; height: 14px; border-radius: 50%; background: #4a9eff; box-shadow: 0 0 4px rgba(74,158,255,0.5); pointer-events: none; }
-    .pan-readout { font-size: 10px; color: #888; font-family: monospace; min-width: 72px; text-align: center; }
+    .pan-radar { display: block; flex-shrink: 0; cursor: crosshair; user-select: none; }
+    .pan-side { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+    .pan-readout { font-size: 11px; color: #888; font-family: monospace; }
     .pan-listen-btn { font-size: 11px; padding: 4px 8px; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap; font-weight: 600; background: #1a3c1a; color: #4caf50; }
     .pan-listen-btn.muted { background: #2a2a2a; color: #666; }
     .pan-listen-btn:hover { filter: brightness(1.2); }
