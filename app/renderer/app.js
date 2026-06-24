@@ -17,13 +17,29 @@ const lineStates = {}; // { [id]: { connected: boolean } }
 
 async function connectShim() {
   const devices = await window.api.listAudioDevices();
+  if (devices.length > 0) {
+    shimDevices = {
+      inputs:  devices.filter(d => d.inChannels  > 0).map(d => ({
+        name: d.name, uid: d.uid, channels: d.inChannels,
+      })),
+      outputs: devices.filter(d => d.outChannels > 0).map(d => ({
+        name: d.name, uid: d.uid, channels: d.outChannels,
+      })),
+    };
+    return;
+  }
+  // CoreAudio unavailable — enumerate via Web Audio API instead
+  try {
+    // getUserMedia first to unlock device labels (required by browser security model)
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    s.getTracks().forEach(t => t.stop());
+  } catch (_) {}
+  const webDevs = await navigator.mediaDevices.enumerateDevices();
   shimDevices = {
-    inputs:  devices.filter(d => d.inChannels  > 0).map(d => ({
-      name: d.name, uid: d.uid, channels: d.inChannels,
-    })),
-    outputs: devices.filter(d => d.outChannels > 0).map(d => ({
-      name: d.name, uid: d.uid, channels: d.outChannels,
-    })),
+    inputs:  webDevs.filter(d => d.kind === 'audioinput' && d.deviceId !== 'communications')
+               .map(d => ({ name: d.label || d.deviceId, uid: d.deviceId, channels: 2 })),
+    outputs: webDevs.filter(d => d.kind === 'audiooutput' && d.deviceId !== 'communications')
+               .map(d => ({ name: d.label || d.deviceId, uid: d.deviceId, channels: 2 })),
   };
 }
 
