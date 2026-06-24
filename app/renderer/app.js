@@ -168,7 +168,7 @@ async function startCaptureForConfig() {
   const inDev = findInputDevice();
   if (!inDev) return;
   const counts = queryChannelCounts();
-  const nCh = config.input_channels_override || counts.inCount;
+  const nCh = counts.inCount;
   const result = await window.api.startAudioCapture(inDev.uid, nCh);
   if (result && !result.ok) {
     console.error('Audio capture failed:', result.error);
@@ -196,8 +196,8 @@ async function init() {
   populateDeviceDropdown(document.getElementById('input-device-select'), shimDevices.inputs, 'input_device_uid', 'input_device');
   populateDeviceDropdown(document.getElementById('output-device-select'), shimDevices.outputs, 'output_device_uid', 'output_device');
   const counts = queryChannelCounts();
-  inputChannelCount = config.input_channels_override || counts.inCount;
-  outputChannelCount = config.output_channels_override || counts.outCount;
+  inputChannelCount = counts.inCount;
+  outputChannelCount = counts.outCount;
   updateChannelDropdowns();
   if (config.input_device_uid || config.input_device) {
     await startCaptureForConfig();
@@ -900,10 +900,6 @@ function setupSettings() {
     });
     // Show detected channel counts as hints; pre-fill overrides from config
     const detected = queryChannelCounts();
-    document.getElementById('input-ch-detected').textContent = `(detected: ${detected.inCount})`;
-    document.getElementById('output-ch-detected').textContent = `(detected: ${detected.outCount})`;
-    document.getElementById('input-ch-override').value = config.input_channels_override || '';
-    document.getElementById('output-ch-override').value = config.output_channels_override || '';
     document.getElementById('comms-room-input').value = config.comms_room || '';
     document.getElementById('comms-password').value = config.comms_password || '';
     document.getElementById('output-mode-select').value = config.outputMode || 'classic';
@@ -997,14 +993,9 @@ function setupSettings() {
     config.outputMode = document.getElementById('output-mode-select').value || 'classic';
     config.spatialOutputDeviceId = document.getElementById('spatial-output-device-select').value || '';
     config.spatialOutputChannels = parseInt(document.getElementById('spatial-channels-select').value, 10) || 2;
-    // Apply channel count overrides (or detected values from shim)
-    const inOverride = parseInt(document.getElementById('input-ch-override').value) || 0;
-    const outOverride = parseInt(document.getElementById('output-ch-override').value) || 0;
-    config.input_channels_override = inOverride || null;
-    config.output_channels_override = outOverride || null;
     const detected = queryChannelCounts();
-    inputChannelCount = inOverride || detected.inCount;
-    outputChannelCount = outOverride || detected.outCount;
+    inputChannelCount = detected.inCount;
+    outputChannelCount = detected.outCount;
     updateChannelDropdowns();
     await window.api.saveConfig(config);
     updateModeIndicator();
