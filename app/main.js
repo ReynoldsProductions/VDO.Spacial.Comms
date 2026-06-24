@@ -470,7 +470,7 @@ function captureCallbackLogged(ch, samples) {
 }
 
 function startUnifiedAudio(cfg, withCapture) {
-  if (process.platform !== 'darwin') return { ok: true };
+  if (process.platform !== 'darwin' || !coreAudio) return { ok: true };
   try {
     const devs = coreAudio.listDevices();
     const capUid = withCapture ? (cfg.input_device_uid || '') : '';
