@@ -139,14 +139,20 @@ function updateChannelDropdowns() {
   config.lines.forEach((line) => {
     const inSel = document.getElementById(`ch-in-${line.id}`);
     const outSel = document.getElementById(`ch-out-${line.id}`);
+    const linInDev = line.input_device_uid
+      ? shimDevices.inputs.find(d => d.uid === line.input_device_uid) : null;
+    const linOutDev = line.output_device_uid
+      ? shimDevices.outputs.find(d => d.uid === line.output_device_uid) : null;
+    const inCount = linInDev ? linInDev.channels : inputChannelCount;
+    const outCount = linOutDev ? linOutDev.channels : outputChannelCount;
     if (inSel) {
-      const clampedIn = Math.min(line.input_channel, inputChannelCount - 1);
-      inSel.innerHTML = channelOptions(clampedIn, inputChannelCount);
+      const clampedIn = Math.min(line.input_channel, inCount - 1);
+      inSel.innerHTML = channelOptions(clampedIn, inCount);
       if (clampedIn !== line.input_channel) { line.input_channel = clampedIn; }
     }
     if (outSel) {
-      const clampedOut = Math.min(line.output_channel, outputChannelCount - 1);
-      outSel.innerHTML = channelOptions(clampedOut, outputChannelCount);
+      const clampedOut = Math.min(line.output_channel, outCount - 1);
+      outSel.innerHTML = channelOptions(clampedOut, outCount);
       if (clampedOut !== line.output_channel) { line.output_channel = clampedOut; }
     }
   });
@@ -371,6 +377,7 @@ function renderLines() {
       const line = config.lines.find(l => l.id === id);
       if (line) {
         line.input_device_uid = el.value || null;
+        updateChannelDropdowns();
         window.api.saveConfig(config);
       }
     });
@@ -382,6 +389,7 @@ function renderLines() {
       const line = config.lines.find(l => l.id === id);
       if (line) {
         line.output_device_uid = el.value || null;
+        updateChannelDropdowns();
         window.api.saveConfig(config);
       }
     });
