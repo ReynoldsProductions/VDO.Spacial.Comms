@@ -18,8 +18,9 @@ try {
 
 const CONFIG_PATH = path.join(os.homedir(), '.vdo-multichan', 'config.json');
 
-function buildLineShim(inputChannel, outputChannel, gainOut, groupName, stripIceServers) {
+function buildLineShim(inputChannel, outputChannel, gainOut, groupName, stripIceServers, inputDeviceId, useWebGum) {
   const groupLiteral = JSON.stringify(String(groupName || ''));
+  const deviceIdLiteral = JSON.stringify(inputDeviceId || '');
   return `
 (function() {
   const INPUT_CH = ${inputChannel};
@@ -28,6 +29,8 @@ function buildLineShim(inputChannel, outputChannel, gainOut, groupName, stripIce
   const GROUP = ${groupLiteral};
   const STRIP_ICE = ${stripIceServers ? 'true' : 'false'};
   const SAMPLE_RATE = 48000;
+  const USE_WEB_GUM = ${useWebGum ? 'true' : 'false'};
+  const GUM_DEVICE_ID = ${deviceIdLiteral};
 
   let _resolveStream;
   const _streamPromise = new Promise(r => { _resolveStream = r; });
@@ -59,6 +62,39 @@ function buildLineShim(inputChannel, outputChannel, gainOut, groupName, stripIce
   (async function initPublishShim() {
     try {
       const { ipcRenderer } = require('electron');
+
+      if (USE_WEB_GUM) {
+        // CoreAudio unavailable — capture mic directly via getUserMedia + channel splitter
+        const constraints = { audio: {
+          ...(GUM_DEVICE_ID ? { deviceId: { exact: GUM_DEVICE_ID } } : {}),
+          channelCount: { ideal: INPUT_CH + 1 },
+          sampleRate: SAMPLE_RATE,
+          echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+        }};
+        try {
+          const micStream = await _origGUM(constraints);
+          const micCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+          const src = micCtx.createMediaStreamSource(micStream);
+          const numCh = micStream.getAudioTracks()[0]?.getSettings()?.channelCount || 1;
+          const dest = micCtx.createMediaStreamDestination();
+          if (INPUT_CH > 0 && numCh > INPUT_CH) {
+            const splitter = micCtx.createChannelSplitter(numCh);
+            const merger = micCtx.createChannelMerger(1);
+            src.connect(splitter);
+            splitter.connect(merger, INPUT_CH, 0);
+            merger.connect(dest);
+          } else {
+            src.connect(dest);
+          }
+          console.log('[shim-bridge] Web GUM ready device=' + (GUM_DEVICE_ID || 'default') + ' ch=' + INPUT_CH + '/' + numCh);
+          _resolveStream(dest.stream);
+        } catch (e) {
+          console.error('[shim-bridge] Web GUM failed:', e.message);
+          _resolveStream(null);
+        }
+        return;
+      }
+
       const audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
       await audioCtx.resume();
 
@@ -595,7 +631,8 @@ app.whenReady().then(() => {
     const preloadPath = path.join(tempDir, `shim-line-${id}.js`);
     fs.writeFileSync(
       preloadPath,
-      buildLineShim(inputChannel ?? 0, outputChannel ?? 0, gainOut ?? 1.0, group ?? '', stripIce)
+      buildLineShim(inputChannel ?? 0, outputChannel ?? 0, gainOut ?? 1.0, group ?? '', stripIce,
+        line?.input_device_uid || cfg.input_device_uid || '', !coreAudio)
     );
 
     const view = createLineView(`persist:line-${id}`, preloadPath, url);
