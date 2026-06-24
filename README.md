@@ -58,6 +58,73 @@ The UI is a web app served by the Control API, not an Electron-native window. Th
 
 ---
 
+---
+
+## Headless / Server Install
+
+Run VDO.Spacial.Comms on a headless Linux box (NUC, mini PC, Pi 5) so the operator UI is reachable from any browser on the network.
+
+### Prerequisites
+
+- **Xvfb** — provides a virtual display for Electron (Chromium requires a display even in headless use)
+  ```bash
+  sudo apt install xvfb
+  ```
+- **Electron** — either installed globally or produced by a dist build
+  ```bash
+  npm install -g electron      # global install
+  # — or —
+  npm run build                # produces dist/linux-unpacked/vdo-spacial-comms
+  ```
+- **Node.js 18+** (for the installer config-patch step)
+
+### Install
+
+```bash
+./install.sh
+```
+
+The script will:
+1. Ask for a port number (default `8080`)
+2. Write the port to `~/.vdo-multichan/config.json`
+3. Install a systemd user service at `~/.config/systemd/user/vdo-spacial-comms.service`
+4. Enable and start the service immediately
+
+At the end it prints:
+
+```
+Spatial Control UI:  http://localhost:8080
+```
+
+Open that URL in any browser on the same network (substitute the host IP to reach it from another machine).
+
+### Check status
+
+```bash
+systemctl --user status vdo-spacial-comms
+```
+
+### View logs
+
+```bash
+journalctl --user -u vdo-spacial-comms -f
+```
+
+The app logs the control UI URL on every start — useful for confirming the port after a reboot:
+
+```bash
+journalctl --user -u vdo-spacial-comms | grep "Spatial Control UI"
+```
+
+### Uninstall
+
+```bash
+./uninstall.sh
+```
+
+Stops and disables the service and removes the unit file. Your config at `~/.vdo-multichan/` is left intact.
+
+
 ## Interoperability with VDO.MultiCh.Comms
 
 These are two separate products. VDO.MultiCh.Comms routes each party line to a dedicated hardware output channel (CoreAudio, macOS). This app replaces that output model with a shared binaural mix — no mode toggle, no shared codebase going forward.

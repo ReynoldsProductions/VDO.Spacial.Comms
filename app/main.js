@@ -569,6 +569,10 @@ app.whenReady().then(() => {
     }
   });
 
+  // Echo the control UI URL so it shows up in systemd journal when running headless.
+  // Check: journalctl --user -u vdo-spacial-comms | grep "Spatial Control UI"
+  console.log(`Spatial Control UI: http://localhost:${cfg.controlApiPort || 8080}`);
+
   setInterval(() => {
     if (!mainWin || mainWin.isDestroyed()) return;
     const capture = {}, playback = {};
