@@ -63,6 +63,17 @@
       ],
       "category": "AudioVideo"
     },
+    "win": {
+      "icon": "assets/icon-source.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
     "dmg": {
       "title": "VDO.Spacial.Comms ${version}"
     }
