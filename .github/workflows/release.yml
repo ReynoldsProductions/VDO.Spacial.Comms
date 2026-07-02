@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
 
 jobs:
   build-mac:
@@ -65,12 +66,38 @@ jobs:
             app/dist/*.AppImage
             app/dist/*.deb
 
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build Windows installer (x64)
+        working-directory: app
+        run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-dist
+          path: app/dist/*.exe
+
   release:
     name: Publish release
-    needs: [build-mac, build-linux]
+    needs: [build-mac, build-linux, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,6 +111,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: linux-dist
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-dist
           path: dist
 
       - name: Generate SHA-256 checksums
@@ -110,5 +142,6 @@ jobs:
             dist/*.dmg
             dist/*.AppImage
             dist/*.deb
+            dist/*.exe
             dist/sha256sums.txt
           fail_on_unmatched_files: true
